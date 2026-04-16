@@ -2,12 +2,14 @@
 """evdev-Daemon: überwacht Tasten global und startet die Transkriptions-Pipeline."""
 import asyncio
 import logging
+import subprocess
 import evdev
 from app.config import BlitztextConfig, load_config
-from app.recorder import RecordingSession
+from app.recorder import RecordingSession, LiveRecordingSession, find_monitor_device
 from app.transcribe import transcribe_audio
 from app.process import process_text, ProcessMode
 from app.inject import inject_text, notify
+from app.routes import live
 
 logger = logging.getLogger("stt-trans.daemon")
 
@@ -19,6 +21,8 @@ class BlitztextDaemon:
         self._running = False
         self._toggle_recording = False  # für trigger_mode == "toggle"
         self._pressed_keys: set[int] = set()
+        self._live_mic_session: LiveRecordingSession | None = None
+        self._live_desktop_session: LiveRecordingSession | None = None
 
     def _key_to_mode(self, key_code: int) -> str | None:
         for mode_name, mode_cfg in self.cfg.modes.items():
@@ -32,6 +36,43 @@ class BlitztextDaemon:
             if combo and combo <= self._pressed_keys:
                 return mode_name
         return None
+
+    async def _toggle_live(self) -> None:
+        """Startet oder stoppt den Live-Transkriptions-Modus."""
+        if self._session is not None:
+            logger.warning("PTT läuft — Live-Modus nicht gestartet")
+            return
+
+        if self._live_mic_session is None:
+            loop = asyncio.get_running_loop()
+            monitor = find_monitor_device()
+            audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else None
+            mic = LiveRecordingSession(device=audio_device)
+            desktop = LiveRecordingSession(device=monitor) if monitor else None
+            mic.start(loop)
+            if desktop:
+                desktop.start(loop)
+            self._live_mic_session = mic
+            self._live_desktop_session = desktop
+            live.set_sessions(mic, desktop)
+            asyncio.create_task(live.start_pumps())
+            notify("recording", "Live-Transkription gestartet")
+            try:
+                subprocess.Popen(
+                    ["xdg-open", "http://localhost:8765/live"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except FileNotFoundError:
+                logger.warning("xdg-open nicht gefunden — öffne http://localhost:8765/live manuell")
+        else:
+            self._live_mic_session.stop()
+            self._live_mic_session = None
+            if self._live_desktop_session:
+                self._live_desktop_session.stop()
+                self._live_desktop_session = None
+            live.set_sessions(None, None)
+            notify("done", "Live-Transkription beendet")
 
     async def _run_pipeline(self, mode_name: str, wav_bytes: bytes) -> None:
         """Whisper → LLM → inject."""
@@ -92,6 +133,16 @@ class BlitztextDaemon:
                 audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else None
 
                 if event.value == 1:
+                    # Live-Key prüfen
+                    live_combo = set(self.cfg.live_key_codes)
+                    if live_combo and live_combo <= self._pressed_keys:
+                        asyncio.create_task(self._toggle_live())
+                        continue
+
+                    # PTT während Live ignorieren
+                    if self._live_mic_session is not None:
+                        continue
+
                     # Key gedrückt — prüfe ob Combo komplett
                     mode_name = self._key_to_mode_combo()
                     if mode_name is None:
@@ -147,3 +198,9 @@ class BlitztextDaemon:
         self._running = False
         if self._session:
             self._session.stop()
+        if self._live_mic_session:
+            self._live_mic_session.stop()
+            self._live_mic_session = None
+        if self._live_desktop_session:
+            self._live_desktop_session.stop()
+            self._live_desktop_session = None

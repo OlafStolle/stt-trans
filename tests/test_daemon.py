@@ -41,3 +41,71 @@ async def test_daemon_pipeline(cfg):
     mock_t.assert_awaited_once()
     mock_i.assert_called_once_with("Hallo", method=cfg.inject.method,
                                    delay_ms=cfg.inject.delay_ms)
+
+
+@pytest.mark.asyncio
+async def test_toggle_live_blocked_during_ptt(monkeypatch):
+    """_toggle_live() startet nicht wenn PTT-Session läuft."""
+    from unittest.mock import MagicMock, patch, AsyncMock
+    from app.daemon import BlitztextDaemon
+    from app.config import BlitztextConfig
+
+    cfg = BlitztextConfig(openai_api_key="x", input_device="/dev/null")
+    daemon = BlitztextDaemon(cfg)
+    daemon._session = MagicMock()  # PTT läuft
+
+    with patch("app.daemon.LiveRecordingSession") as mock_cls:
+        await daemon._toggle_live()
+        mock_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_toggle_live_starts_sessions(monkeypatch):
+    """_toggle_live() startet mic + desktop Session wenn frei."""
+    from unittest.mock import MagicMock, patch
+    from app.daemon import BlitztextDaemon
+    from app.config import BlitztextConfig
+
+    cfg = BlitztextConfig(openai_api_key="x", input_device="/dev/null",
+                          live_key_codes=[200])
+    daemon = BlitztextDaemon(cfg)
+
+    mock_mic = MagicMock()
+    mock_desktop = MagicMock()
+
+    with patch("app.daemon.LiveRecordingSession", side_effect=[mock_mic, mock_desktop]), \
+         patch("app.daemon.find_monitor_device", return_value="Monitor Device"), \
+         patch("app.daemon.live") as mock_live, \
+         patch("app.daemon.notify"), \
+         patch("app.daemon.subprocess.Popen"):
+        mock_live.start_pumps = AsyncMock()
+        await daemon._toggle_live()
+
+    assert daemon._live_mic_session is mock_mic
+    assert daemon._live_desktop_session is mock_desktop
+    mock_mic.start.assert_called_once()
+    mock_desktop.start.assert_called_once()
+    mock_live.set_sessions.assert_called_once_with(mock_mic, mock_desktop)
+
+
+@pytest.mark.asyncio
+async def test_toggle_live_stops_sessions(monkeypatch):
+    """Zweiter _toggle_live()-Aufruf stoppt Sessions."""
+    from unittest.mock import MagicMock, patch
+    from app.daemon import BlitztextDaemon
+    from app.config import BlitztextConfig
+
+    cfg = BlitztextConfig(openai_api_key="x", live_key_codes=[200])
+    daemon = BlitztextDaemon(cfg)
+    mock_mic = MagicMock()
+    mock_desktop = MagicMock()
+    daemon._live_mic_session = mock_mic
+    daemon._live_desktop_session = mock_desktop
+
+    with patch("app.daemon.live") as mock_live:
+        await daemon._toggle_live()
+
+    mock_mic.stop.assert_called_once()
+    mock_desktop.stop.assert_called_once()
+    assert daemon._live_mic_session is None
+    mock_live.set_sessions.assert_called_with(None, None)
