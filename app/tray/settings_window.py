@@ -214,6 +214,11 @@ class SettingsWindow:
         tk.Label(live_row, text="Live", bg=CARD, fg=FG,
                  font=(FONT, 10), width=12, anchor="w").pack(side="left", padx=8, pady=6)
 
+        # Live ist immer Toggle ("Drücken") — statische Anzeige wie bei anderen Modi
+        tk.Button(live_row, text="Drücken", relief="flat", bd=0, padx=8, pady=4,
+                  font=(FONT, 8), bg=BLUE, fg="white", state="disabled",
+                  disabledforeground="white").pack(side="left", padx=1)
+
         live_lbl = tk.Label(live_row, text=live_key_name,
                             bg=CARD, fg=BLUE if live_key_name else MUTED,
                             font=(FONT, 9), anchor="w", width=14)
