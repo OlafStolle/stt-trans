@@ -12,6 +12,7 @@ from app.routes.config_routes import router as config_router
 from app.routes.health_routes import router as health_router
 from app.routes.process_routes import router as process_router
 from app.routes.status_routes import router as status_router
+from app.routes.live import router as live_router
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -60,6 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(process_router)
     app.include_router(status_router)
+    app.include_router(live_router)
     return app
 
 
