@@ -41,3 +41,13 @@ def test_list_input_devices_returns_list():
             MockDev.return_value.name = "Test Keyboard"
             devices = client.list_input_devices()
     assert isinstance(devices, list)
+
+
+def test_get_status_returns_dict():
+    client = BlitztextClient("http://localhost:8765")
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"recording": False, "mode": None}
+    mock_resp.raise_for_status = MagicMock()
+    with patch("requests.get", return_value=mock_resp):
+        s = client.get_status()
+    assert s["recording"] is False

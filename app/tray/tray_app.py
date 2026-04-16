@@ -11,7 +11,7 @@ if "PYSTRAY_BACKEND" not in os.environ:
 
 import pystray
 from app.tray.api_client import BlitztextClient
-from app.tray.icon import create_tray_icon
+from app.tray.icon import create_tray_icon, create_recording_icon
 from app.tray.settings_window import SettingsWindow
 
 
@@ -29,6 +29,7 @@ class BlitztextTrayApp:
             pystray.MenuItem("Beenden", self._quit),
         )
         self._icon = pystray.Icon("blitztext", icon_image, "Blitztext", menu)
+        threading.Thread(target=self._poll_status, daemon=True).start()
         self._icon.run()
 
     def _open_settings(self, icon=None, item=None) -> None:
@@ -46,6 +47,27 @@ class BlitztextTrayApp:
 
         t = threading.Thread(target=_run, daemon=True)
         t.start()
+
+    def _poll_status(self) -> None:
+        """Pollt /api/status alle 500ms und wechselt Icon."""
+        import time
+        _idle_icon = create_tray_icon(64)
+        _rec_icon = create_recording_icon(64)
+        _was_recording = False
+
+        while True:
+            time.sleep(0.5)
+            if self._icon is None:
+                break
+            try:
+                status = self.client.get_status()
+                is_rec = status.get("recording", False)
+            except Exception:
+                is_rec = False
+
+            if is_rec != _was_recording:
+                _was_recording = is_rec
+                self._icon.icon = _rec_icon if is_rec else _idle_icon
 
     def _quit(self, icon=None, item=None) -> None:
         if self._icon:

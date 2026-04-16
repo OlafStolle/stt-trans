@@ -28,6 +28,11 @@ class BlitztextClient:
         r.raise_for_status()
         return r.json()
 
+    def get_status(self) -> dict[str, Any]:
+        r = requests.get(f"{self.base}/api/status", timeout=2)
+        r.raise_for_status()
+        return r.json()
+
     def list_input_devices(self) -> list[tuple[str, str]]:
         """Returns list of (path, name) tuples for all evdev devices."""
         devices: list[tuple[str, str]] = []
