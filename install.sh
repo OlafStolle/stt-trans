@@ -66,6 +66,10 @@ fi
 # API-Key in env-Datei schreiben
 if [ -n "$OPENAI_API_KEY" ]; then
     echo "OPENAI_API_KEY=$OPENAI_API_KEY" > "$CONFIG_DIR/env"
+    # Config direkt setzen (nur Key-Wert, ohne Variablenname)
+    curl -s -X PATCH http://localhost:8765/api/config \
+      -H "Content-Type: application/json" \
+      -d "{\"openai_api_key\": \"$OPENAI_API_KEY\"}" > /dev/null 2>&1 || true
     echo "  ✓ OPENAI_API_KEY gespeichert"
 else
     echo "  HINWEIS: Setze OPENAI_API_KEY in $CONFIG_DIR/env"
