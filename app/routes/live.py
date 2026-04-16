@@ -197,11 +197,14 @@ async def live_page() -> FileResponse:
 @router.post("/live/stop")
 async def stop_live() -> dict:
     """Stoppt beide Live-Sessions vom Browser aus."""
-    if _live_mic_session:
-        _live_mic_session.stop()
-    if _live_desktop_session:
-        _live_desktop_session.stop()
-    set_sessions(None, None)
+    mic = _live_mic_session
+    desktop = _live_desktop_session
+    set_sessions(None, None)  # sofort leeren — daemon sync + Response nicht blockieren
+    loop = asyncio.get_event_loop()
+    if mic:
+        loop.run_in_executor(None, mic.stop)
+    if desktop:
+        loop.run_in_executor(None, desktop.stop)
     return {"ok": True}
 
 

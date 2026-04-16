@@ -51,7 +51,7 @@ class BlitztextDaemon:
         if self._live_mic_session is None:
             loop = asyncio.get_running_loop()
             monitor = find_monitor_device()
-            audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else None
+            audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else "pulse"
             mic = LiveRecordingSession(device=audio_device)
             desktop = LiveRecordingSession(device=monitor) if monitor else None
             mic.start(loop)
@@ -82,7 +82,6 @@ class BlitztextDaemon:
     async def _run_pipeline(self, mode_name: str, wav_bytes: bytes) -> None:
         """Whisper → LLM → inject."""
         try:
-            notify("recording", f"Transkribiere ({mode_name})...")
             text = await transcribe_audio(
                 wav_bytes,
                 language=self.cfg.whisper_language,
@@ -135,7 +134,7 @@ class BlitztextDaemon:
                 elif event.value == 0:
                     self._pressed_keys.discard(event.code)
 
-                audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else None
+                audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else "pulse"
 
                 if event.value == 1:
                     # Live-Key prüfen
@@ -144,9 +143,9 @@ class BlitztextDaemon:
                         asyncio.create_task(self._toggle_live())
                         continue
 
-                    # Aufbauende Live-Combo: PTT unterdrücken solange gedrückte
-                    # Tasten Teilmenge der Live-Combo sind (kein vorzeitiger PTT)
-                    if live_combo and self._pressed_keys <= live_combo:
+                    # Aufbauende Live-Combo: PTT unterdrücken wenn mehrere Tasten
+                    # Teilmenge der Live-Combo sind (kein vorzeitiger PTT bei Einzel-Keys)
+                    if live_combo and len(self._pressed_keys) > 1 and self._pressed_keys <= live_combo:
                         continue
 
                     # PTT während Live ignorieren

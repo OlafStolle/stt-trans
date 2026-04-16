@@ -290,6 +290,36 @@ class SettingsWindow:
         # Apply initial visual state
         self._refresh_backend_buttons()
 
+        # ── Mikrofon-Auswahl ─────────────────────────────────────────────
+        tk.Label(frame, text="MIKROFON", bg=BG, fg=MUTED,
+                 font=(FONT, 9)).pack(anchor="w", padx=16, pady=(16, 4))
+
+        mic_row = tk.Frame(frame, bg=BG)
+        mic_row.pack(fill="x", padx=16, pady=(0, 8))
+
+        import sounddevice as sd
+        input_devices = ["default"]
+        try:
+            for d in sd.query_devices():
+                if d["max_input_channels"] > 0 and not d["name"].startswith(
+                    ("sysdefault", "surround", "lavrate", "samplerate",
+                     "speexrate", "pipewire", "pulse", "speex", "upmix", "vdownmix")
+                ):
+                    input_devices.append(d["name"])
+        except Exception:
+            pass
+
+        current_audio_device = cfg.get("audio_device", "default")
+        self._mic_var = tk.StringVar(
+            value=current_audio_device if current_audio_device in input_devices else "default"
+        )
+
+        mic_menu = tk.OptionMenu(mic_row, self._mic_var, *input_devices)
+        mic_menu.config(bg=CARD, fg=FG, activebackground=BLUE, activeforeground="white",
+                        highlightthickness=0, relief="flat", font=(FONT, 10))
+        mic_menu["menu"].config(bg=CARD, fg=FG, activebackground=BLUE, activeforeground="white")
+        mic_menu.pack(side="left", fill="x", expand=True)
+
         # Speichern
         tk.Button(
             frame, text="Speichern", bg=BLUE, fg="white",
@@ -416,6 +446,10 @@ class SettingsWindow:
         if mode_detected:
             first = next(iter(mode_detected.values()))
             updates["input_device"] = first["device_path"]
+
+        # Mikrofon
+        if hasattr(self, "_mic_var"):
+            updates["audio_device"] = self._mic_var.get()
 
         # Transcription backend
         if self._backend_var:

@@ -54,6 +54,15 @@ class RecordingSession:
     ) -> None:
         self.samplerate = samplerate
         self.device = device
+        # Detect device's native sample rate (may differ from 16000 Hz target).
+        try:
+            if device is not None:
+                native_sr = sd.query_devices(device)["default_samplerate"]
+            else:
+                native_sr = float(SAMPLERATE)
+        except Exception:
+            native_sr = float(SAMPLERATE)
+        self._native_sr: int = int(native_sr)
         self._chunks: list[np.ndarray] = []
         self._stream: sd.InputStream | None = None
         self._lock = threading.Lock()
@@ -62,7 +71,7 @@ class RecordingSession:
         """Startet die Aufnahme. Kann mehrfach verwendet werden (reset)."""
         self._chunks.clear()
         self._stream = sd.InputStream(
-            samplerate=self.samplerate,
+            samplerate=self._native_sr,  # use device's native rate
             channels=CHANNELS,
             dtype="int16",
             device=self.device or None,
@@ -82,7 +91,7 @@ class RecordingSession:
             trailing_ms: Stille-Padding am Ende in Millisekunden (verhindert Abschneiden).
 
         Returns:
-            WAV-kodierte Audiodaten als bytes, oder b"" wenn keine Daten.
+            WAV-kodierte Audiodaten als bytes (16000 Hz), oder b"" wenn keine Daten.
         """
         if self._stream:
             self._stream.stop()
@@ -92,9 +101,12 @@ class RecordingSession:
             if not self._chunks:
                 return b""
             audio = np.concatenate(self._chunks, axis=0)
-        padding = np.zeros((int(self.samplerate * trailing_ms / 1000), CHANNELS), dtype=np.int16)
+        # Padding at native rate, then resample everything to 16000 Hz for Whisper.
+        padding = np.zeros((int(self._native_sr * trailing_ms / 1000), CHANNELS), dtype=np.int16)
         audio = np.concatenate([audio, padding], axis=0)
-        return _to_wav_bytes(audio, self.samplerate)
+        if self._native_sr != SAMPLERATE:
+            audio = _resample(audio, self._native_sr, SAMPLERATE)
+        return _to_wav_bytes(audio, SAMPLERATE)
 
 
 def find_monitor_device() -> str | None:
@@ -120,6 +132,31 @@ def find_monitor_device() -> str | None:
     except Exception:
         pass
     return None
+
+
+def _resample(audio: np.ndarray, from_sr: int, to_sr: int) -> np.ndarray:
+    """Resamples int16 audio from from_sr to to_sr using linear interpolation.
+
+    Args:
+        audio: int16 array, shape (frames, channels).
+        from_sr: Source sample rate in Hz.
+        to_sr: Target sample rate in Hz.
+
+    Returns:
+        Resampled int16 array, shape (new_frames, channels).
+    """
+    n_in = audio.shape[0]
+    n_out = int(n_in * to_sr / from_sr)
+    x_in = np.arange(n_in)
+    x_out = np.linspace(0, n_in - 1, n_out)
+    if audio.ndim == 1:
+        return np.interp(x_out, x_in, audio).astype(np.int16)
+    # Multi-channel: resample each channel independently.
+    channels = audio.shape[1]
+    out = np.empty((n_out, channels), dtype=np.int16)
+    for c in range(channels):
+        out[:, c] = np.interp(x_out, x_in, audio[:, c]).astype(np.int16)
+    return out
 
 
 def _to_wav_bytes(audio: np.ndarray, samplerate: int) -> bytes:
@@ -161,12 +198,23 @@ class LiveRecordingSession:
     ) -> None:
         self.samplerate = samplerate
         self._device = device
+        # Detect device's native sample rate (may differ from 16000 Hz target).
+        # For pulse: prefixed devices the real name isn't queryable here; fall back to SAMPLERATE.
+        try:
+            if device is not None and not device.startswith("pulse:"):
+                native_sr = sd.query_devices(device)["default_samplerate"]
+            else:
+                native_sr = float(SAMPLERATE)
+        except Exception:
+            native_sr = float(SAMPLERATE)
+        self._native_sr: int = int(native_sr)
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._muted = False
         self._stream: sd.InputStream | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._buffer: list[np.ndarray] = []
-        self._chunk_frames = samplerate * self.CHUNK_SECONDS
+        # Chunk length in native-rate frames.
+        self._chunk_frames = self._native_sr * self.CHUNK_SECONDS
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Startet den sounddevice-InputStream. loop nötig für thread-sichere Queue."""
@@ -183,7 +231,7 @@ class LiveRecordingSession:
 
         try:
             self._stream = sd.InputStream(
-                samplerate=self.samplerate,
+                samplerate=self._native_sr,  # use device's native rate
                 channels=CHANNELS,
                 dtype="int16",
                 device=device or None,
@@ -211,7 +259,10 @@ class LiveRecordingSession:
             audio = full[: self._chunk_frames]
             tail = full[self._chunk_frames :]
             self._buffer = [tail] if tail.shape[0] > 0 else []
-            wav_bytes = _to_wav_bytes(audio, self.samplerate)
+            # Resample to 16000 Hz before handing to Whisper.
+            if self._native_sr != SAMPLERATE:
+                audio = _resample(audio, self._native_sr, SAMPLERATE)
+            wav_bytes = _to_wav_bytes(audio, SAMPLERATE)
             if self._loop:
                 self._loop.call_soon_threadsafe(self._queue.put_nowait, wav_bytes)
 
