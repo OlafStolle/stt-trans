@@ -95,21 +95,39 @@ else
     echo "  Service aktiviert, aber NICHT gestartet — erst neu anmelden!"
 fi
 
+# 5. Tray-App installieren
+echo ""
+echo "--- Tray-App ---"
+VENV_BIN="$PROJECT_DIR/.venv/bin"
+sed "s|VENV_PATH|$VENV_BIN|g" \
+    "$PROJECT_DIR/blitztext-tray.service" > "$SERVICE_DIR/blitztext-tray.service"
+systemctl --user daemon-reload
+systemctl --user enable blitztext-tray.service
+echo "  ✓ Tray-Service aktiviert"
+
+if [ "$NEED_RELOGIN" != "true" ]; then
+    # Tray benötigt eine laufende graphical session
+    if [ -n "$WAYLAND_DISPLAY" ] || [ -n "$DISPLAY" ]; then
+        systemctl --user start blitztext-tray.service
+        sleep 1
+        if systemctl --user is-active --quiet blitztext-tray.service; then
+            echo "  ✓ Tray-App läuft"
+        else
+            echo "  HINWEIS: Tray-Service konnte nicht gestartet werden"
+            echo "  Manuell starten: $VENV_BIN/blitztext-tray &"
+        fi
+    else
+        echo "  HINWEIS: Kein DISPLAY/WAYLAND_DISPLAY — Tray startet beim nächsten Login"
+    fi
+fi
+
 echo ""
 echo "╔════════════════════════════════════════════════╗"
 echo "║         Installation abgeschlossen             ║"
 echo "╚════════════════════════════════════════════════╝"
 echo ""
 echo "Nächste Schritte:"
-echo "  Status:  systemctl --user status blitztext.service"
-echo "  Logs:    journalctl --user -u blitztext.service -f"
+echo "  Daemon:  systemctl --user status blitztext.service"
+echo "  Tray:    systemctl --user status blitztext-tray.service"
 echo "  Health:  curl http://localhost:8765/api/health"
-echo ""
-echo "Gerät konfigurieren (Tastatur):"
-echo "  Verfügbare Geräte anzeigen:"
-echo "    ls /dev/input/event* | xargs -I{} bash -c 'echo \"--- {} ---\" && cat /sys/class/input/\$(basename {})/device/name 2>/dev/null'"
-echo ""
-echo "  Gerät setzen:"
-echo "    curl -X PATCH http://localhost:8765/api/config \\"
-echo "      -H 'Content-Type: application/json' \\"
-echo "      -d '{\"input_device\": \"/dev/input/eventX\"}'"
+echo "  Config:  Rechtsklick auf Tray-Icon → Einstellungen"
