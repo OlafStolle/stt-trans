@@ -1,0 +1,15 @@
+[Unit]
+Description=Blitztext Linux Diktierdienst
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/data/Projects/blitztext-linux
+ExecStart=/mnt/data/Projects/blitztext-linux/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.config/transcriptor/env
+
+[Install]
+WantedBy=default.target
