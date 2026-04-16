@@ -10,6 +10,7 @@ import evdev
 import evdev.ecodes
 
 from app.tray.api_client import BlitztextClient
+from app.transcribe import local_available
 
 
 BG    = "#1c1c1e"
@@ -21,15 +22,15 @@ GREEN = "#22c55e"
 FONT  = "DejaVu Sans"
 
 MODES = [
-    ("normal", "Blitztext"),
-    ("plus",   "Blitztext+"),
-    ("rage",   "Blitztext $%&!"),
-    ("emoji",  "Blitztext 😊"),
+    ("normal", "stt-trans"),
+    ("plus",   "stt-trans+"),
+    ("rage",   "stt-trans $%&!"),
+    ("emoji",  "stt-trans 😊"),
 ]
 
 
 def _listen_for_key(timeout: float = 8.0) -> dict | None:
-    """Blockierend: Wartet auf ersten Tastendruck auf beliebigem evdev-Gerät."""
+    """Blockierend: Wartet auf Tastenkombination (alle Keys halten, dann loslassen)."""
     devices: list[evdev.InputDevice] = []
     for path in sorted(glob.glob("/dev/input/event*")):
         try:
@@ -37,6 +38,7 @@ def _listen_for_key(timeout: float = 8.0) -> dict | None:
         except Exception:
             pass
 
+    pressed: dict[int, str] = {}  # key_code -> key_name
     deadline = time.monotonic() + timeout
     try:
         while time.monotonic() < deadline:
@@ -45,12 +47,20 @@ def _listen_for_key(timeout: float = 8.0) -> dict | None:
             for dev in r:
                 try:
                     for event in dev.read():
-                        if event.type == evdev.ecodes.EV_KEY and event.value == 1:
-                            raw = evdev.ecodes.KEY.get(event.code, f"KEY_{event.code}")
-                            key_name = raw[0] if isinstance(raw, list) else raw
+                        if event.type != evdev.ecodes.EV_KEY:
+                            continue
+                        raw = evdev.ecodes.KEY.get(event.code, f"KEY_{event.code}")
+                        key_name = raw[0] if isinstance(raw, list) else raw
+                        if event.value == 1:
+                            pressed[event.code] = key_name
+                        elif event.value == 0 and pressed:
+                            # Erste Taste losgelassen → Combo komplett
+                            key_codes = list(pressed.keys())
+                            key_names = list(pressed.values())
+                            combo_name = " + ".join(key_names)
                             return {
-                                "key_code": event.code,
-                                "key_name": key_name,
+                                "key_codes": key_codes,
+                                "key_name": combo_name,
                                 "device_path": dev.path,
                                 "device_name": dev.name,
                             }
@@ -72,7 +82,14 @@ class SettingsWindow:
         self._win: tk.Tk | None = None
         # Speichert erkannte Tasten pro Modus: {mode_key: {key_code, key_name, device_path}}
         self._detected: dict[str, dict] = {}
+        self._cleared: set[str] = set()
         self._listening: bool = False
+        # Transcription backend toggle
+        self._backend_var: tk.StringVar | None = None
+        self._model_var: tk.StringVar | None = None
+        self._backend_btns: dict[str, tk.Button] = {}
+        self._model_combo: ttk.Combobox | None = None
+        self._backend_warn_lbl: tk.Label | None = None
 
     def show(self) -> None:
         if self._win and self._win.winfo_exists():
@@ -83,8 +100,8 @@ class SettingsWindow:
     def _build(self) -> None:
         win = tk.Tk()
         self._win = win
-        win.title("Blitztext Einstellungen")
-        win.geometry("420x480")
+        win.title("stt-trans Einstellungen")
+        win.geometry("620x540")
         win.configure(bg=BG)
         win.resizable(False, False)
         win.protocol("WM_DELETE_WINDOW", self._close)
@@ -109,6 +126,7 @@ class SettingsWindow:
             cfg = self.client.get_config()
         except Exception:
             cfg = {}
+        self._cfg = cfg  # Cache — Daemon könnte später gestoppt sein
 
         self._build_anpassen(tab_anpassen, cfg)
         self._build_zugang(tab_zugang, cfg)
@@ -120,64 +138,116 @@ class SettingsWindow:
     def _build_anpassen(self, frame: tk.Frame, cfg: dict) -> None:
         modes_cfg = cfg.get("modes", {})
 
-        # Trigger-Modus
-        tk.Label(frame, text="MODUS", bg=BG, fg=MUTED,
-                 font=(FONT, 9)).pack(anchor="w", padx=16, pady=(12, 4))
-
-        mode_frame = tk.Frame(frame, bg=CARD, padx=4, pady=4)
-        mode_frame.pack(fill="x", padx=16, pady=2)
-
-        self._trigger_var = tk.StringVar(value=cfg.get("trigger_mode", "hold"))
-        self._btn_hold = tk.Button(
-            mode_frame, text="Halten",
-            command=lambda: self._set_trigger("hold"),
-            relief="flat", bd=0, padx=20, pady=7, font=(FONT, 11),
-        )
-        self._btn_press = tk.Button(
-            mode_frame, text="Drücken",
-            command=lambda: self._set_trigger("toggle"),
-            relief="flat", bd=0, padx=20, pady=7, font=(FONT, 11),
-        )
-        self._btn_hold.pack(side="left", padx=2)
-        self._btn_press.pack(side="left", padx=2)
-        self._refresh_trigger_buttons()
-
-        # Tastenkürzel mit "Taste erkennen"
         tk.Label(frame, text="TASTENKÜRZEL", bg=BG, fg=MUTED,
-                 font=(FONT, 9)).pack(anchor="w", padx=16, pady=(18, 4))
+                 font=(FONT, 9)).pack(anchor="w", padx=16, pady=(12, 4))
 
         self._key_labels: dict[str, tk.Label] = {}
         self._detect_btns: dict[str, tk.Button] = {}
+        self._trigger_vars: dict[str, tk.StringVar] = {}
+        self._trigger_btns: dict[str, dict] = {}
 
         for mode_key, mode_label in MODES:
             m = modes_cfg.get(mode_key) or {}
-            key_name    = m.get("key_name", "")
-            device_name = ""  # Gerätename nicht in Config gespeichert
+            key_name = m.get("key_name", "")
+            trigger  = m.get("trigger_mode", "hold")
 
             row = tk.Frame(frame, bg=CARD)
             row.pack(fill="x", padx=16, pady=2)
 
             # Modus-Name
             tk.Label(row, text=mode_label, bg=CARD, fg=FG,
-                     font=(FONT, 10), width=14, anchor="w").pack(side="left", padx=10, pady=7)
+                     font=(FONT, 10), width=12, anchor="w").pack(side="left", padx=8, pady=6)
 
-            # Erkannte Taste anzeigen
-            display = _format_key_display(key_name, device_name)
-            lbl = tk.Label(row, text=display, bg=CARD, fg=BLUE if display else MUTED,
-                           font=(FONT, 9), anchor="w", width=18)
-            lbl.pack(side="left")
+            # Hold/Toggle pro Modus
+            tvar = tk.StringVar(value=trigger)
+            self._trigger_vars[mode_key] = tvar
+            btn_hold = tk.Button(
+                row, text="Halten",
+                command=lambda mk=mode_key: self._set_mode_trigger(mk, "hold"),
+                relief="flat", bd=0, padx=8, pady=4, font=(FONT, 8),
+            )
+            btn_toggle = tk.Button(
+                row, text="Drücken",
+                command=lambda mk=mode_key: self._set_mode_trigger(mk, "toggle"),
+                relief="flat", bd=0, padx=8, pady=4, font=(FONT, 8),
+            )
+            btn_hold.pack(side="left", padx=1)
+            btn_toggle.pack(side="left", padx=1)
+            self._trigger_btns[mode_key] = {"hold": btn_hold, "toggle": btn_toggle}
+            self._refresh_mode_trigger_buttons(mode_key)
+
+            # Erkannte Taste/Combo anzeigen
+            lbl = tk.Label(row, text=key_name, bg=CARD, fg=BLUE if key_name else MUTED,
+                           font=(FONT, 9), anchor="w", width=14)
+            lbl.pack(side="left", padx=4)
             self._key_labels[mode_key] = lbl
 
             # "Taste erkennen"-Button
             btn = tk.Button(
-                row, text="⌨ Taste erkennen",
+                row, text="⌨",
                 command=lambda mk=mode_key: self._start_listen(mk),
-                relief="flat", bd=0, padx=10, pady=5,
+                relief="flat", bd=0, padx=8, pady=4,
                 bg=CARD, fg=MUTED, font=(FONT, 9),
                 activebackground=BLUE, activeforeground="white",
             )
             btn.pack(side="right", padx=6)
             self._detect_btns[mode_key] = btn
+
+            # "Tastenzuordnung löschen"-Button
+            clr_btn = tk.Button(
+                row, text="✕",
+                command=lambda mk=mode_key: self._clear_key(mk),
+                relief="flat", bd=0, padx=6, pady=4,
+                bg=CARD, fg=MUTED, font=(FONT, 9),
+                activebackground="#ef4444", activeforeground="white",
+            )
+            clr_btn.pack(side="right", padx=2)
+
+        # ── Transkriptions-Backend ───────────────────────────────────────
+        tk.Label(frame, text="TRANSKRIPTION", bg=BG, fg=MUTED,
+                 font=(FONT, 9)).pack(anchor="w", padx=16, pady=(12, 4))
+
+        row_backend = tk.Frame(frame, bg=CARD)
+        row_backend.pack(fill="x", padx=16, pady=2)
+
+        backend_val = cfg.get("transcribe_backend", "online")
+        self._backend_var = tk.StringVar(value=backend_val)
+
+        btn_online = tk.Button(
+            row_backend, text="Online",
+            command=lambda: self._set_backend("online"),
+            relief="flat", bd=0, padx=12, pady=4, font=(FONT, 9),
+        )
+        btn_lokal = tk.Button(
+            row_backend, text="Lokal",
+            command=lambda: self._set_backend("local"),
+            relief="flat", bd=0, padx=12, pady=4, font=(FONT, 9),
+        )
+        btn_online.pack(side="left", padx=(8, 1), pady=6)
+        btn_lokal.pack(side="left", padx=1)
+        self._backend_btns = {"online": btn_online, "local": btn_lokal}
+
+        model_val = cfg.get("local_whisper_model", "small")
+        self._model_var = tk.StringVar(value=model_val)
+        self._model_combo = ttk.Combobox(
+            row_backend,
+            textvariable=self._model_var,
+            values=["small", "medium"],
+            state="readonly",
+            width=8,
+            font=(FONT, 9),
+        )
+        self._model_combo.pack(side="left", padx=10)
+
+        self._backend_warn_lbl = tk.Label(
+            frame,
+            text="faster-whisper nicht installiert — nur Online verfuegbar",
+            bg=BG, fg=MUTED, font=(FONT, 8),
+        )
+        self._backend_warn_lbl.pack(anchor="w", padx=16)
+
+        # Apply initial visual state
+        self._refresh_backend_buttons()
 
         # Speichern
         tk.Button(
@@ -188,23 +258,55 @@ class SettingsWindow:
             activebackground="#2563eb", activeforeground="white",
         ).pack(pady=14)
 
-    def _set_trigger(self, mode: str) -> None:
-        self._trigger_var.set(mode)
-        self._refresh_trigger_buttons()
+    def _clear_key(self, mode_key: str) -> None:
+        self._detected.pop(mode_key, None)
+        self._cleared.add(mode_key)
+        self._key_labels[mode_key].configure(text="", fg=MUTED)
 
-    def _refresh_trigger_buttons(self) -> None:
-        is_hold = self._trigger_var.get() == "hold"
-        self._btn_hold.configure(
-            bg=BLUE if is_hold else CARD, fg="white" if is_hold else MUTED)
-        self._btn_press.configure(
-            bg=BLUE if not is_hold else CARD, fg="white" if not is_hold else MUTED)
+    def _set_mode_trigger(self, mode_key: str, trigger: str) -> None:
+        self._trigger_vars[mode_key].set(trigger)
+        self._refresh_mode_trigger_buttons(mode_key)
+
+    def _set_backend(self, backend: str) -> None:
+        if self._backend_var:
+            self._backend_var.set(backend)
+        self._refresh_backend_buttons()
+
+    def _refresh_backend_buttons(self) -> None:
+        if not self._backend_var or not self._backend_btns:
+            return
+        is_online = self._backend_var.get() == "online"
+        self._backend_btns["online"].configure(
+            bg=BLUE if is_online else CARD,
+            fg="white" if is_online else MUTED,
+        )
+        self._backend_btns["local"].configure(
+            bg=BLUE if not is_online else CARD,
+            fg="white" if not is_online else MUTED,
+        )
+        # Dropdown: enabled only when local is selected
+        if self._model_combo:
+            self._model_combo.configure(state="readonly" if not is_online else "disabled")
+        # Warning: shown when local selected but faster-whisper not installed
+        if self._backend_warn_lbl:
+            show_warn = (not is_online) and (not local_available())
+            if show_warn:
+                self._backend_warn_lbl.pack(anchor="w", padx=16)
+            else:
+                self._backend_warn_lbl.pack_forget()
+
+    def _refresh_mode_trigger_buttons(self, mode_key: str) -> None:
+        is_hold = self._trigger_vars[mode_key].get() == "hold"
+        btns = self._trigger_btns[mode_key]
+        btns["hold"].configure(bg=BLUE if is_hold else CARD, fg="white" if is_hold else MUTED)
+        btns["toggle"].configure(bg=BLUE if not is_hold else CARD, fg="white" if not is_hold else MUTED)
 
     def _start_listen(self, mode_key: str) -> None:
         if self._listening:
             return
         self._listening = True
+        self._stop_daemon()
 
-        # Alle Buttons deaktivieren, aktiven hervorheben
         for mk, btn in self._detect_btns.items():
             if mk == mode_key:
                 btn.configure(text="Drücken...", bg=BLUE, fg="white")
@@ -222,39 +324,52 @@ class SettingsWindow:
     def _on_key_detected(self, mode_key: str, result: dict | None) -> None:
         self._listening = False
 
-        # Buttons wieder aktivieren
         for btn in self._detect_btns.values():
-            btn.configure(state="normal", bg=CARD, fg=MUTED, text="⌨ Taste erkennen")
+            btn.configure(state="normal", bg=CARD, fg=MUTED, text="⌨")
 
         if result is None:
             self._key_labels[mode_key].configure(text="Timeout", fg=MUTED)
+            self._restart_daemon()
             return
 
         self._detected[mode_key] = result
-        display = _format_key_display(result["key_name"], result["device_name"])
-        self._key_labels[mode_key].configure(text=display, fg=GREEN)
+        self._key_labels[mode_key].configure(text=result["key_name"], fg=GREEN)
+        self._restart_daemon()
 
     def _save_anpassen(self) -> None:
-        updates: dict = {"trigger_mode": self._trigger_var.get()}
+        # Gecachte Config nutzen (Daemon könnte gestoppt gewesen sein)
+        modes = dict(self._cfg.get("modes", {}))
 
+        # trigger_mode pro Modus speichern
+        for mode_key, tvar in self._trigger_vars.items():
+            m = dict(modes.get(mode_key) or {})
+            m["trigger_mode"] = tvar.get()
+            modes[mode_key] = m
+
+        # Erkannte Combos einpflegen
+        for mode_key, detected in self._detected.items():
+            m = dict(modes.get(mode_key) or {})
+            m["key_codes"] = detected["key_codes"]
+            m["key_name"]  = detected["key_name"]
+            modes[mode_key] = m
+
+        # Gelöschte Combos explizit leeren
+        for mode_key in self._cleared:
+            m = dict(modes.get(mode_key) or {})
+            m["key_codes"] = []
+            m["key_name"] = ""
+            modes[mode_key] = m
+
+        updates: dict = {"modes": modes}
         if self._detected:
-            # Hole aktuelle modes-Config
-            try:
-                cfg = self.client.get_config()
-                modes = cfg.get("modes", {})
-            except Exception:
-                modes = {}
-
-            for mode_key, detected in self._detected.items():
-                m = dict(modes.get(mode_key) or {})
-                m["key_code"] = detected["key_code"]
-                m["key_name"] = detected["key_name"]
-                modes[mode_key] = m
-
-            # Gerät aus erstem erkannten Modus setzen (alle teilen dasselbe Gerät)
             first = next(iter(self._detected.values()))
             updates["input_device"] = first["device_path"]
-            updates["modes"] = modes
+
+        # Transcription backend
+        if self._backend_var:
+            updates["transcribe_backend"] = self._backend_var.get()
+        if self._model_var:
+            updates["local_whisper_model"] = self._model_var.get()
 
         try:
             self.client.patch_config(updates)
@@ -278,7 +393,7 @@ class SettingsWindow:
 
         tk.Label(
             frame,
-            text=("HINWEIS\nFür direktes Einfügen: Blitztext einmal in Programme legen "
+            text=("HINWEIS\nFür direktes Einfügen: stt-trans einmal in Programme legen "
                   "und dann Mikrofon sowie Bedienungshilfen erlauben."),
             bg=BG, fg=MUTED, wraplength=340, justify="left", font=(FONT, 9),
         ).pack(anchor="w", padx=16, pady=16)
@@ -302,17 +417,29 @@ class SettingsWindow:
         except Exception as e:
             messagebox.showerror("Fehler", str(e))
 
-    def _restart_daemon(self) -> None:
-        """Startet den Blitztext-Daemon neu damit neue Config wirksam wird."""
+    def _stop_daemon(self) -> None:
+        """Stoppt den stt-trans-Daemon (vor Key-Detection)."""
         import subprocess
         try:
             subprocess.run(
-                ["systemctl", "--user", "restart", "blitztext.service"],
+                ["systemctl", "--user", "stop", "stt-trans.service"],
                 check=True, capture_output=True, timeout=10,
             )
         except Exception as e:
             import logging
-            logging.getLogger("blitztext.tray").warning("Daemon-Restart fehlgeschlagen: %s", e)
+            logging.getLogger("stt-trans.tray").warning("Daemon-Stop fehlgeschlagen: %s", e)
+
+    def _restart_daemon(self) -> None:
+        """Startet den stt-trans-Daemon neu damit neue Config wirksam wird."""
+        import subprocess
+        try:
+            subprocess.run(
+                ["systemctl", "--user", "restart", "stt-trans.service"],
+                check=True, capture_output=True, timeout=10,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger("stt-trans.tray").warning("Daemon-Restart fehlgeschlagen: %s", e)
 
     def _close(self) -> None:
         if self._win:
