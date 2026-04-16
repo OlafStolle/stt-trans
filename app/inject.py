@@ -25,6 +25,11 @@ def inject_text(text: str, method: str = "xdotool", delay_ms: int = 50) -> None:
                 ["xdotool", "key", "--clearmodifiers", "ctrl+v"],
                 check=True, capture_output=True,
             )
+        elif method == "wtype":
+            subprocess.run(
+                ["wtype", "--", text],
+                check=True, capture_output=True,
+            )
         else:
             logger.warning("Unknown inject method: %s", method)
     except subprocess.CalledProcessError as e:

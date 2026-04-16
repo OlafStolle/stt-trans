@@ -27,3 +27,21 @@ def test_inject_empty_string_is_noop(monkeypatch):
     monkeypatch.setattr("subprocess.run", lambda cmd, **kw: calls.append(cmd))
     inject_text("", method="xdotool")
     assert len(calls) == 0
+
+from unittest.mock import MagicMock
+
+def test_inject_wtype_called_when_method_is_wtype():
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        inject_text("Hallo Welt", method="wtype")
+    mock_run.assert_called_once()
+    args = mock_run.call_args[0][0]
+    assert args[0] == "wtype"
+    assert "Hallo Welt" in args
+
+def test_inject_xdotool_still_works():
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        inject_text("Test", method="xdotool")
+    args = mock_run.call_args[0][0]
+    assert args[0] == "xdotool"

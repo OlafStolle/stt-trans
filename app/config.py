@@ -15,7 +15,7 @@ class ModeConfig(BaseModel):
 
 
 class InjectConfig(BaseModel):
-    method: str = "xdotool"   # xdotool | xclip+paste
+    method: str = "wtype"   # wtype | xdotool | xclip+paste
     delay_ms: int = 50
 
 
