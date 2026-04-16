@@ -38,7 +38,10 @@ def test_find_monitor_device_not_found():
     fake_devices = [
         {"name": "Built-in Microphone", "max_input_channels": 2},
     ]
-    with patch("sounddevice.query_devices", return_value=fake_devices):
+    mock_result = MagicMock()
+    mock_result.stdout = ""
+    with patch("sounddevice.query_devices", return_value=fake_devices), \
+         patch("subprocess.run", return_value=mock_result):
         result = find_monitor_device()
     assert result is None
 
@@ -48,7 +51,10 @@ def test_find_monitor_device_no_input_channels():
     fake_devices = [
         {"name": "Monitor of Something", "max_input_channels": 0},
     ]
-    with patch("sounddevice.query_devices", return_value=fake_devices):
+    mock_result = MagicMock()
+    mock_result.stdout = ""
+    with patch("sounddevice.query_devices", return_value=fake_devices), \
+         patch("subprocess.run", return_value=mock_result):
         result = find_monitor_device()
     assert result is None
 

@@ -98,10 +98,27 @@ class RecordingSession:
 
 
 def find_monitor_device() -> str | None:
-    """Gibt den Namen des PipeWire Monitor-Source-Geräts zurück, oder None."""
+    """Gibt den Namen des PipeWire Monitor-Source-Geräts zurück, oder None.
+
+    Versucht zuerst ALSA-Gerätenamen, dann pactl (PipeWire/PulseAudio).
+    Rückgabe mit Präfix 'pulse:' → LiveRecordingSession muss PULSE_SOURCE setzen.
+    """
     for dev in sd.query_devices():
         if "monitor" in dev["name"].lower() and dev["max_input_channels"] > 0:
             return dev["name"]
+    # Fallback: PipeWire-Monitor via pactl suchen
+    try:
+        import subprocess as _sp
+        result = _sp.run(
+            ["pactl", "list", "sources", "short"],
+            capture_output=True, text=True, timeout=3,
+        )
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 5 and ".monitor" in parts[1] and parts[4] == "RUNNING":
+                return f"pulse:{parts[1]}"
+    except Exception:
+        pass
     return None
 
 
@@ -153,16 +170,33 @@ class LiveRecordingSession:
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Startet den sounddevice-InputStream. loop nötig für thread-sichere Queue."""
+        import os
         self._loop = loop
         self._buffer.clear()
-        self._stream = sd.InputStream(
-            samplerate=self.samplerate,
-            channels=CHANNELS,
-            dtype="int16",
-            device=self._device or None,
-            callback=self._callback,
-        )
-        self._stream.start()
+
+        device = self._device
+        _restore_pulse: str | None = os.environ.get("PULSE_SOURCE")
+        if device and device.startswith("pulse:"):
+            # PipeWire/PulseAudio Monitor-Source — PULSE_SOURCE setzen
+            os.environ["PULSE_SOURCE"] = device[6:]
+            device = "pulse"
+
+        try:
+            self._stream = sd.InputStream(
+                samplerate=self.samplerate,
+                channels=CHANNELS,
+                dtype="int16",
+                device=device or None,
+                callback=self._callback,
+            )
+            self._stream.start()
+        finally:
+            # PULSE_SOURCE zurücksetzen
+            if self._device and self._device.startswith("pulse:"):
+                if _restore_pulse is None:
+                    os.environ.pop("PULSE_SOURCE", None)
+                else:
+                    os.environ["PULSE_SOURCE"] = _restore_pulse
 
     def _callback(self, indata: np.ndarray, frames: int, time: object, status: object) -> None:
         """PortAudio-Thread: Samples akkumulieren, bei vollem Chunk in Queue."""
