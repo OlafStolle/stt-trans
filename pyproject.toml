@@ -1,5 +1,5 @@
 [project]
-name = "blitztext-linux"
+name = "stt-trans"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
@@ -19,10 +19,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27"]
+dev   = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27"]
+local = ["faster-whisper>=1.0.0"]
 
 [project.scripts]
-blitztext-tray = "app.tray.tray_app:main"
+stt-trans-tray = "app.tray.tray_app:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
