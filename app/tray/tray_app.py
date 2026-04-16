@@ -1,4 +1,14 @@
+import os
 import threading
+
+# Auf Wayland/KDE AppIndicator (SNI) bevorzugen, falls verfügbar
+if "PYSTRAY_BACKEND" not in os.environ:
+    try:
+        import gi  # noqa: F401
+        os.environ["PYSTRAY_BACKEND"] = "appindicator"
+    except ImportError:
+        pass
+
 import pystray
 from app.tray.api_client import BlitztextClient
 from app.tray.icon import create_tray_icon
