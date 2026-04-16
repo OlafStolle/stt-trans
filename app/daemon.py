@@ -139,6 +139,11 @@ class BlitztextDaemon:
                         asyncio.create_task(self._toggle_live())
                         continue
 
+                    # Aufbauende Live-Combo: PTT unterdrücken solange gedrückte
+                    # Tasten Teilmenge der Live-Combo sind (kein vorzeitiger PTT)
+                    if live_combo and self._pressed_keys <= live_combo:
+                        continue
+
                     # PTT während Live ignorieren
                     if self._live_mic_session is not None:
                         continue
