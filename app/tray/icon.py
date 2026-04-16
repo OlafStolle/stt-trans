@@ -2,7 +2,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 def create_tray_icon(size: int = 64) -> Image.Image:
-    """Erzeugt ein Blitztext-Icon: blauer Kreis mit 'B'."""
+    """Erzeugt ein stt-trans-Icon: blauer Kreis mit 'B'."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     draw.ellipse([2, 2, size - 2, size - 2], fill=(59, 130, 246, 255))
@@ -21,7 +21,7 @@ def create_tray_icon(size: int = 64) -> Image.Image:
 
 
 def create_recording_icon(size: int = 64) -> Image.Image:
-    """Blitztext-Icon mit gruenem Punkt unten rechts = Aufnahme aktiv."""
+    """stt-trans-Icon mit gruenem Punkt unten rechts = Aufnahme aktiv."""
     img = create_tray_icon(size)
     draw = ImageDraw.Draw(img)
     dot_r = size // 6

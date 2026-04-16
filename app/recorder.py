@@ -74,8 +74,11 @@ class RecordingSession:
         with self._lock:
             self._chunks.append(indata.copy())
 
-    def stop(self) -> bytes:
+    def stop(self, trailing_ms: int = 300) -> bytes:
         """Stoppt die Aufnahme und gibt WAV-Bytes zurueck.
+
+        Args:
+            trailing_ms: Stille-Padding am Ende in Millisekunden (verhindert Abschneiden).
 
         Returns:
             WAV-kodierte Audiodaten als bytes, oder b"" wenn keine Daten.
@@ -88,6 +91,8 @@ class RecordingSession:
             if not self._chunks:
                 return b""
             audio = np.concatenate(self._chunks, axis=0)
+        padding = np.zeros((int(self.samplerate * trailing_ms / 1000), CHANNELS), dtype=np.int16)
+        audio = np.concatenate([audio, padding], axis=0)
         return _to_wav_bytes(audio, self.samplerate)
 
 

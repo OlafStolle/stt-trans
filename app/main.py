@@ -1,5 +1,5 @@
 # app/main.py
-"""Blitztext Linux — FastAPI App mit Daemon-Lifespan."""
+"""stt-trans Linux — FastAPI App mit Daemon-Lifespan."""
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
@@ -49,7 +49,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Blitztext Linux",
+        title="stt-trans",
         version="0.1.0",
         description="Systemweiter Diktierdienst für Linux",
         lifespan=lifespan,

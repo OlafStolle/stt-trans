@@ -28,7 +28,7 @@ class BlitztextTrayApp:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Beenden", self._quit),
         )
-        self._icon = pystray.Icon("blitztext", icon_image, "Blitztext", menu)
+        self._icon = pystray.Icon("stt-trans", icon_image, "stt-trans", menu)
         threading.Thread(target=self._poll_status, daemon=True).start()
         self._icon.run()
 
