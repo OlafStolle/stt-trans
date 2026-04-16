@@ -16,6 +16,15 @@ from app.routes.status_routes import router as status_router
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
+
+class _StatusFilter(logging.Filter):
+    """Unterdrückt /api/status Access-Log-Einträge (Tray-Polling-Spam)."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/api/status" not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_StatusFilter())
+
 _daemon: BlitztextDaemon | None = None
 
 

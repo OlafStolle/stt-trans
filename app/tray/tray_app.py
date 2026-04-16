@@ -49,14 +49,14 @@ class BlitztextTrayApp:
         t.start()
 
     def _poll_status(self) -> None:
-        """Pollt /api/status alle 500ms und wechselt Icon."""
+        """Pollt /api/status alle 3s und wechselt Icon."""
         import time
         _idle_icon = create_tray_icon(64)
         _rec_icon = create_recording_icon(64)
         _was_recording = False
 
         while True:
-            time.sleep(0.5)
+            time.sleep(3)
             if self._icon is None:
                 break
             try:
