@@ -46,6 +46,8 @@ class BlitztextConfig(BaseModel):
     })
     vocabulary: list[str] = Field(default_factory=list)
     inject: InjectConfig = Field(default_factory=InjectConfig)
+    live_key_codes: list[int] = Field(default_factory=list)
+    live_key_name: str = ""
 
 
 def _config_path() -> Path:

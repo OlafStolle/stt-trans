@@ -62,3 +62,19 @@ def test_old_config_without_backend_field_loads(tmp_path, monkeypatch):
     cfg = load_config()
     assert cfg.transcribe_backend == "online"
     assert cfg.local_whisper_model == "small"
+
+def test_live_key_codes_default():
+    cfg = BlitztextConfig(openai_api_key="x")
+    assert cfg.live_key_codes == []
+
+def test_live_key_name_default():
+    cfg = BlitztextConfig(openai_api_key="x")
+    assert cfg.live_key_name == ""
+
+def test_live_key_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("BLITZTEXT_CONFIG", str(tmp_path / "cfg.json"))
+    cfg = BlitztextConfig(openai_api_key="x", live_key_codes=[200], live_key_name="KEY_F17")
+    save_config(cfg)
+    loaded = load_config()
+    assert loaded.live_key_codes == [200]
+    assert loaded.live_key_name == "KEY_F17"
