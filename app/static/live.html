@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live-Transkription</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: #0f0f11; color: #e0e0e0; height: 100vh; display: flex;
+         flex-direction: column; overflow: hidden; }
+
+  /* Header */
+  #header { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+            background: #1a1a1f; border-bottom: 1px solid #2a2a35; flex-shrink: 0; }
+  #status-dot { width: 10px; height: 10px; border-radius: 50%; background: #888; }
+  #status-dot.live { background: #ef4444; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.4 } }
+  #status-text { font-size: 13px; font-weight: 600; letter-spacing: .05em; }
+  #mic-btn { margin-left: auto; padding: 5px 14px; border-radius: 6px; border: none;
+             cursor: pointer; font-size: 12px; font-weight: 600;
+             background: #22c55e; color: #fff; transition: background .2s; }
+  #mic-btn.muted { background: #ef4444; }
+  #clock { font-size: 12px; color: #666; margin-left: 8px; }
+
+  /* Columns */
+  #columns { display: flex; flex: 1; overflow: hidden; }
+  .col { flex: 1; display: flex; flex-direction: column; overflow: hidden;
+         border-right: 1px solid #2a2a35; }
+  .col:last-child { border-right: none; }
+
+  /* Column header */
+  .col-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+               background: #16161b; border-bottom: 1px solid #2a2a35; flex-shrink: 0; }
+  .col-title { font-size: 12px; font-weight: 700; color: #a0a0b0;
+               text-transform: uppercase; letter-spacing: .08em; flex: 1; }
+  .col-header select { background: #2a2a35; color: #e0e0e0; border: 1px solid #3a3a45;
+                       border-radius: 4px; padding: 3px 6px; font-size: 11px; cursor: pointer; }
+  .ws-dot { width: 7px; height: 7px; border-radius: 50%; background: #888; flex-shrink: 0; }
+  .ws-dot.connected { background: #22c55e; }
+
+  /* Transcript area */
+  .transcript { flex: 1; overflow-y: auto; padding: 12px; }
+  .chunk { margin-bottom: 14px; }
+  .chunk-meta { font-size: 10px; color: #555; margin-bottom: 3px; }
+  .chunk-speaker { font-size: 10px; color: #7c7cff; font-weight: 600; margin-bottom: 2px; }
+  .chunk-text { font-size: 13px; line-height: 1.5; color: #d0d0e0; }
+  .chunk-translation { font-size: 12px; color: #88cc88; margin-top: 2px; padding-left: 8px;
+                       border-left: 2px solid #2a4a2a; }
+  .no-signal { font-size: 12px; color: #444; padding: 20px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div id="status-dot"></div>
+  <span id="status-text">Warte auf Verbindung…</span>
+  <button id="mic-btn" onclick="toggleMic()">🎤 Mic: AN</button>
+  <span id="clock"></span>
+</div>
+
+<div id="columns">
+  <div class="col">
+    <div class="col-header">
+      <span class="col-title">🎤 Mikrofon</span>
+      <select id="mic-lang" onchange="setLang('mic', this.value)">
+        <option value="de">Deutsch</option>
+        <option value="en">English</option>
+        <option value="ceb">Cebuano</option>
+      </select>
+      <div class="ws-dot" id="mic-ws-dot"></div>
+    </div>
+    <div class="transcript" id="mic-transcript">
+      <div class="no-signal">Warte auf Transkription…</div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="col-header">
+      <span class="col-title">🔊 Unterhaltung</span>
+      <select id="desktop-lang" onchange="setLang('desktop', this.value)">
+        <option value="de">Deutsch</option>
+        <option value="en">English</option>
+        <option value="ceb">Cebuano</option>
+      </select>
+      <div class="ws-dot" id="desktop-ws-dot"></div>
+    </div>
+    <div class="transcript" id="desktop-transcript">
+      <div class="no-signal">Warte auf Transkription…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const WS_BASE = `ws://${location.host}`;
+let micWs = null, desktopWs = null;
+let micMuted = false;
+let firstMicChunk = true, firstDesktopChunk = true;
+
+// Clock
+setInterval(() => {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('de-DE');
+}, 1000);
+
+// Lang from localStorage
+['mic', 'desktop'].forEach(stream => {
+  const saved = localStorage.getItem(`live_lang_${stream}`);
+  if (saved) document.getElementById(`${stream}-lang`).value = saved;
+});
+
+function setLang(stream, lang) {
+  localStorage.setItem(`live_lang_${stream}`, lang);
+  const ws = stream === 'mic' ? micWs : desktopWs;
+  if (ws && ws.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify({ set_target_lang: lang }));
+}
+
+function toggleMic() {
+  micMuted = !micMuted;
+  const btn = document.getElementById('mic-btn');
+  btn.textContent = micMuted ? '🔇 Mic: AUS' : '🎤 Mic: AN';
+  btn.className = micMuted ? 'muted' : '';
+  if (micWs && micWs.readyState === WebSocket.OPEN)
+    micWs.send(JSON.stringify({ mute: micMuted }));
+}
+
+function appendChunk(containerId, data) {
+  const container = document.getElementById(containerId);
+  // Entferne "Warte…" Platzhalter
+  const placeholder = container.querySelector('.no-signal');
+  if (placeholder) placeholder.remove();
+
+  const div = document.createElement('div');
+  div.className = 'chunk';
+  let html = '';
+  if (data.speaker)
+    html += `<div class="chunk-speaker">${data.speaker}</div>`;
+  html += `<div class="chunk-meta">${data.timestamp}${data.lang_detected ? ' · ' + data.lang_detected : ''}</div>`;
+  html += `<div class="chunk-text">${escHtml(data.text)}</div>`;
+  if (data.translation)
+    html += `<div class="chunk-translation">→ ${escHtml(data.translation)}</div>`;
+  div.innerHTML = html;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function updateStatus(connected) {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  if (connected) {
+    dot.className = 'live';
+    text.textContent = '🔴 Live';
+  } else {
+    dot.className = '';
+    text.textContent = 'Verbindung getrennt…';
+  }
+}
+
+function connectWs(stream) {
+  const url = `${WS_BASE}/ws/live/${stream}`;
+  const ws = new WebSocket(url);
+  const dot = document.getElementById(`${stream}-ws-dot`);
+
+  ws.onopen = () => {
+    dot.className = 'ws-dot connected';
+    updateStatus(true);
+    // Zielsprache nach Reconnect senden
+    const lang = localStorage.getItem(`live_lang_${stream}`) || 'de';
+    ws.send(JSON.stringify({ set_target_lang: lang }));
+    if (stream === 'mic' && micMuted)
+      ws.send(JSON.stringify({ mute: true }));
+  };
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.done) return;
+    appendChunk(`${stream}-transcript`, data);
+  };
+
+  ws.onclose = () => {
+    dot.className = 'ws-dot';
+    updateStatus(false);
+    setTimeout(() => connectWs(stream), 3000);
+  };
+
+  ws.onerror = () => ws.close();
+
+  if (stream === 'mic') micWs = ws;
+  else desktopWs = ws;
+}
+
+connectWs('mic');
+connectWs('desktop');
+</script>
+</body>
+</html>
