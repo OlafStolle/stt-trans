@@ -134,7 +134,7 @@ function appendChunk(containerId, data) {
   div.className = 'chunk';
   let html = '';
   if (data.speaker)
-    html += `<div class="chunk-speaker">${data.speaker}</div>`;
+    html += `<div class="chunk-speaker">${escHtml(data.speaker)}</div>`;
   html += `<div class="chunk-meta">${data.timestamp}${data.lang_detected ? ' · ' + data.lang_detected : ''}</div>`;
   html += `<div class="chunk-text">${escHtml(data.text)}</div>`;
   if (data.translation)
