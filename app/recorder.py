@@ -115,7 +115,7 @@ def find_monitor_device() -> str | None:
         )
         for line in result.stdout.splitlines():
             parts = line.split("\t")
-            if len(parts) >= 5 and ".monitor" in parts[1] and parts[4] == "RUNNING":
+            if len(parts) >= 2 and ".monitor" in parts[1]:
                 return f"pulse:{parts[1]}"
     except Exception:
         pass

@@ -194,6 +194,17 @@ async def live_page() -> FileResponse:
     return FileResponse(_STATIC_DIR / "live.html")
 
 
+@router.post("/live/stop")
+async def stop_live() -> dict:
+    """Stoppt beide Live-Sessions vom Browser aus."""
+    if _live_mic_session:
+        _live_mic_session.stop()
+    if _live_desktop_session:
+        _live_desktop_session.stop()
+    set_sessions(None, None)
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # WebSocket Routes
 # ---------------------------------------------------------------------------
