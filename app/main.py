@@ -11,11 +11,16 @@ from app.daemon import BlitztextDaemon
 from app.routes.config_routes import router as config_router
 from app.routes.health_routes import router as health_router
 from app.routes.process_routes import router as process_router
+from app.routes.status_routes import router as status_router
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 _daemon: BlitztextDaemon | None = None
+
+
+def get_daemon() -> "BlitztextDaemon | None":
+    return _daemon
 
 
 @asynccontextmanager
@@ -45,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(config_router)
     app.include_router(health_router)
     app.include_router(process_router)
+    app.include_router(status_router)
     return app
 
 
