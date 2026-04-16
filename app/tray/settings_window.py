@@ -203,6 +203,42 @@ class SettingsWindow:
             )
             clr_btn.pack(side="right", padx=2)
 
+        # ── Live-Modus-Taste ────────────────────────────────────────────
+        tk.Label(frame, text="LIVE-MODUS", bg=BG, fg=MUTED,
+                 font=(FONT, 9)).pack(anchor="w", padx=16, pady=(12, 4))
+
+        live_key_name = cfg.get("live_key_name", "")
+        live_row = tk.Frame(frame, bg=CARD)
+        live_row.pack(fill="x", padx=16, pady=2)
+
+        tk.Label(live_row, text="Live", bg=CARD, fg=FG,
+                 font=(FONT, 10), width=12, anchor="w").pack(side="left", padx=8, pady=6)
+
+        live_lbl = tk.Label(live_row, text=live_key_name,
+                            bg=CARD, fg=BLUE if live_key_name else MUTED,
+                            font=(FONT, 9), anchor="w", width=14)
+        live_lbl.pack(side="left", padx=4)
+        self._key_labels["live"] = live_lbl
+
+        live_detect_btn = tk.Button(
+            live_row, text="⌨",
+            command=lambda: self._start_listen("live"),
+            relief="flat", bd=0, padx=8, pady=4,
+            bg=CARD, fg=MUTED, font=(FONT, 9),
+            activebackground=BLUE, activeforeground="white",
+        )
+        live_detect_btn.pack(side="right", padx=6)
+        self._detect_btns["live"] = live_detect_btn
+
+        live_clr_btn = tk.Button(
+            live_row, text="✕",
+            command=lambda: self._clear_key("live"),
+            relief="flat", bd=0, padx=6, pady=4,
+            bg=CARD, fg=MUTED, font=(FONT, 9),
+            activebackground="#ef4444", activeforeground="white",
+        )
+        live_clr_btn.pack(side="right", padx=2)
+
         # ── Transkriptions-Backend ───────────────────────────────────────
         tk.Label(frame, text="TRANSKRIPTION", bg=BG, fg=MUTED,
                  font=(FONT, 9)).pack(anchor="w", padx=16, pady=(12, 4))
@@ -361,8 +397,19 @@ class SettingsWindow:
             modes[mode_key] = m
 
         updates: dict = {"modes": modes}
-        if self._detected:
-            first = next(iter(self._detected.values()))
+
+        # Live-Key speichern
+        if "live" in self._detected:
+            d = self._detected["live"]
+            updates["live_key_codes"] = d["key_codes"]
+            updates["live_key_name"] = d["key_name"]
+        elif "live" in self._cleared:
+            updates["live_key_codes"] = []
+            updates["live_key_name"] = ""
+
+        mode_detected = {k: v for k, v in self._detected.items() if k != "live"}
+        if mode_detected:
+            first = next(iter(mode_detected.values()))
             updates["input_device"] = first["device_path"]
 
         # Transcription backend
