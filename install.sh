@@ -99,7 +99,7 @@ fi
 echo ""
 echo "--- Tray-App ---"
 VENV_BIN="$PROJECT_DIR/.venv/bin"
-sed "s|VENV_PATH|$VENV_BIN|g" \
+sed "s|VENV_PATH|$VENV_BIN|g; s|PROJECT_DIR|$PROJECT_DIR|g" \
     "$PROJECT_DIR/blitztext-tray.service" > "$SERVICE_DIR/blitztext-tray.service"
 systemctl --user daemon-reload
 systemctl --user enable blitztext-tray.service

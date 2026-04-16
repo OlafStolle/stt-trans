@@ -5,11 +5,10 @@ Wants=blitztext.service
 
 [Service]
 Type=simple
+WorkingDirectory=PROJECT_DIR
 ExecStart=VENV_PATH/blitztext-tray
 Restart=on-failure
 RestartSec=5
-# Wayland: WAYLAND_DISPLAY wird von der Session geerbt
-# X11: DISPLAY=:0 als Fallback
 Environment=XDG_RUNTIME_DIR=/run/user/%U
 Environment=PYTHONPATH=/usr/lib/python3.14/site-packages
 
