@@ -178,11 +178,11 @@ function connectWs(stream) {
   ws.onopen = () => {
     dot.className = 'ws-dot connected';
     updateStatus(true);
-    // Zielsprache nach Reconnect senden
+    // Zielsprache + Mute-Zustand nach Reconnect synchronisieren
     const lang = localStorage.getItem(`live_lang_${stream}`) || 'de';
     ws.send(JSON.stringify({ set_target_lang: lang }));
-    if (stream === 'mic' && micMuted)
-      ws.send(JSON.stringify({ mute: true }));
+    if (stream === 'mic')
+      ws.send(JSON.stringify({ mute: micMuted }));
   };
 
   ws.onmessage = (e) => {

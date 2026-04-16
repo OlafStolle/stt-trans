@@ -43,6 +43,11 @@ class BlitztextDaemon:
             logger.warning("PTT läuft — Live-Modus nicht gestartet")
             return
 
+        # Stop-Button im Browser könnte live._live_mic_session geleert haben
+        if self._live_mic_session is not None and live._live_mic_session is None:
+            self._live_mic_session = None
+            self._live_desktop_session = None
+
         if self._live_mic_session is None:
             loop = asyncio.get_running_loop()
             monitor = find_monitor_device()
