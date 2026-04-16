@@ -259,6 +259,7 @@ class SettingsWindow:
         try:
             self.client.patch_config(updates)
             messagebox.showinfo("Gespeichert", "Einstellungen gespeichert.")
+            self._restart_daemon()
         except Exception as e:
             messagebox.showerror("Fehler", str(e))
 
@@ -297,8 +298,21 @@ class SettingsWindow:
         try:
             self.client.patch_config({"openai_api_key": key})
             messagebox.showinfo("Gespeichert", "API-Key gespeichert.")
+            self._restart_daemon()
         except Exception as e:
             messagebox.showerror("Fehler", str(e))
+
+    def _restart_daemon(self) -> None:
+        """Startet den Blitztext-Daemon neu damit neue Config wirksam wird."""
+        import subprocess
+        try:
+            subprocess.run(
+                ["systemctl", "--user", "restart", "blitztext.service"],
+                check=True, capture_output=True, timeout=10,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger("blitztext.tray").warning("Daemon-Restart fehlgeschlagen: %s", e)
 
     def _close(self) -> None:
         if self._win:
