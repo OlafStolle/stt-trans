@@ -4,6 +4,7 @@ import asyncio
 import io
 import logging
 import subprocess
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -29,6 +30,7 @@ _mic_subscribers: set[asyncio.Queue] = set()
 _desktop_subscribers: set[asyncio.Queue] = set()
 _pump_tasks: set[asyncio.Task] = set()
 _cached_config = None
+_stop_callback: Callable[[], None] | None = None
 
 
 def _get_config():
@@ -62,6 +64,12 @@ def set_sessions(
     global _live_mic_session, _live_desktop_session
     _live_mic_session = mic
     _live_desktop_session = desktop
+
+
+def set_stop_callback(fn: Callable[[], None] | None) -> None:
+    """Daemon registriert einen Callback der bei Browser-Stop aufgerufen wird."""
+    global _stop_callback
+    _stop_callback = fn
 
 
 async def start_pumps() -> None:
@@ -199,8 +207,15 @@ async def stop_live() -> dict:
     """Stoppt beide Live-Sessions vom Browser aus."""
     mic = _live_mic_session
     desktop = _live_desktop_session
-    set_sessions(None, None)  # sofort leeren — daemon sync + Response nicht blockieren
-    loop = asyncio.get_event_loop()
+    set_sessions(None, None)
+    # Pump-Tasks cancellen
+    for task in list(_pump_tasks):
+        task.cancel()
+    _pump_tasks.clear()
+    # Daemon-State zuruecksetzen
+    if _stop_callback:
+        _stop_callback()
+    loop = asyncio.get_running_loop()
     if mic:
         loop.run_in_executor(None, mic.stop)
     if desktop:

@@ -31,11 +31,15 @@ class BlitztextDaemon:
         return None
 
     def _key_to_mode_combo(self) -> str | None:
+        best_mode: str | None = None
+        best_len: int = 0
         for mode_name, mode_cfg in self.cfg.modes.items():
             combo = set(mode_cfg.effective_key_codes)
             if combo and combo <= self._pressed_keys:
-                return mode_name
-        return None
+                if len(combo) > best_len:
+                    best_len = len(combo)
+                    best_mode = mode_name
+        return best_mode
 
     async def _toggle_live(self) -> None:
         """Startet oder stoppt den Live-Transkriptions-Modus."""
@@ -60,6 +64,7 @@ class BlitztextDaemon:
             self._live_mic_session = mic
             self._live_desktop_session = desktop
             live.set_sessions(mic, desktop)
+            live.set_stop_callback(self._on_live_stopped)
             asyncio.create_task(live.start_pumps())
             notify("recording", "Live-Transkription gestartet")
             try:
@@ -77,6 +82,7 @@ class BlitztextDaemon:
                 self._live_desktop_session.stop()
                 self._live_desktop_session = None
             live.set_sessions(None, None)
+            live.set_stop_callback(None)
             notify("done", "Live-Transkription beendet")
 
     async def _run_pipeline(self, mode_name: str, wav_bytes: bytes) -> None:
@@ -202,6 +208,11 @@ class BlitztextDaemon:
                 dev.close()
             except Exception:
                 pass
+
+    def _on_live_stopped(self) -> None:
+        """Browser hat Live gestoppt — Daemon-State synchronisieren."""
+        self._live_mic_session = None
+        self._live_desktop_session = None
 
     def stop(self) -> None:
         self._running = False
