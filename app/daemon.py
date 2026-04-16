@@ -9,7 +9,7 @@ from app.transcribe import transcribe_audio
 from app.process import process_text, ProcessMode
 from app.inject import inject_text, notify
 
-logger = logging.getLogger("blitztext.daemon")
+logger = logging.getLogger("stt-trans.daemon")
 
 class BlitztextDaemon:
     def __init__(self, cfg: BlitztextConfig | None = None):
@@ -18,10 +18,18 @@ class BlitztextDaemon:
         self._session: RecordingSession | None = None
         self._running = False
         self._toggle_recording = False  # für trigger_mode == "toggle"
+        self._pressed_keys: set[int] = set()
 
     def _key_to_mode(self, key_code: int) -> str | None:
         for mode_name, mode_cfg in self.cfg.modes.items():
             if mode_cfg.key_code == key_code:
+                return mode_name
+        return None
+
+    def _key_to_mode_combo(self) -> str | None:
+        for mode_name, mode_cfg in self.cfg.modes.items():
+            combo = set(mode_cfg.effective_key_codes)
+            if combo and combo <= self._pressed_keys:
                 return mode_name
         return None
 
@@ -62,8 +70,8 @@ class BlitztextDaemon:
 
         try:
             dev = evdev.InputDevice(device_path)
-            logger.info("Blitztext Daemon gestartet auf %s", device_path)
-            notify("done", "Blitztext bereit")
+            logger.info("stt-trans Daemon gestartet auf %s", device_path)
+            notify("done", "stt-trans bereit")
         except Exception as e:
             logger.error("Kann Device nicht öffnen: %s", e)
             return
@@ -75,29 +83,29 @@ class BlitztextDaemon:
                 if event.type != evdev.ecodes.EV_KEY:
                     continue
 
-                mode_name = self._key_to_mode(event.code)
-                if mode_name is None:
-                    continue
+                # Pressed-Keys-Set aktualisieren
+                if event.value == 1:
+                    self._pressed_keys.add(event.code)
+                elif event.value == 0:
+                    self._pressed_keys.discard(event.code)
 
                 audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else None
 
-                if self.cfg.trigger_mode == "hold":
-                    if event.value == 1:
+                if event.value == 1:
+                    # Key gedrückt — prüfe ob Combo komplett
+                    mode_name = self._key_to_mode_combo()
+                    if mode_name is None:
+                        continue
+                    trigger = self.cfg.trigger_mode
+
+                    if trigger == "hold" and self._active_mode is None:
                         self._active_mode = mode_name
                         self._session = RecordingSession(device=audio_device)
                         self._session.start()
                         notify("recording", f"Aufnahme ({mode_name})...")
                         logger.info("Recording started (hold): %s", mode_name)
-                    elif event.value == 0:
-                        if self._session and self._active_mode:
-                            wav = self._session.stop()
-                            mode = self._active_mode
-                            self._session = None
-                            self._active_mode = None
-                            asyncio.create_task(self._run_pipeline(mode, wav))
 
-                elif self.cfg.trigger_mode == "toggle":
-                    if event.value == 1:
+                    elif trigger == "toggle":
                         if not self._toggle_recording:
                             self._toggle_recording = True
                             self._active_mode = mode_name
@@ -108,6 +116,19 @@ class BlitztextDaemon:
                         else:
                             self._toggle_recording = False
                             if self._session and self._active_mode:
+                                wav = self._session.stop()
+                                mode = self._active_mode
+                                self._session = None
+                                self._active_mode = None
+                                asyncio.create_task(self._run_pipeline(mode, wav))
+
+                elif event.value == 0:
+                    # Key losgelassen — bei hold: Recording stoppen wenn aktiv
+                    if self._session and self._active_mode:
+                        mode_cfg = self.cfg.modes.get(self._active_mode)
+                        if mode_cfg and self.cfg.trigger_mode == "hold":
+                            combo = set(mode_cfg.effective_key_codes)
+                            if event.code in combo:  # Einer der Combo-Keys losgelassen
                                 wav = self._session.stop()
                                 mode = self._active_mode
                                 self._session = None

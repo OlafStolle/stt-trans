@@ -9,14 +9,20 @@ CONFIG_DEFAULT_PATH = Path.home() / ".config" / "transcriptor" / "config.json"
 
 class ModeConfig(BaseModel):
     key_code: int = 0
+    key_codes: list[int] = Field(default_factory=list)
     key_name: str = ""
     prompt: Optional[str] = None
     emoji_count: str = "mittel"  # wenig | mittel | viel
 
+    @property
+    def effective_key_codes(self) -> list[int]:
+        return self.key_codes if self.key_codes else ([self.key_code] if self.key_code else [])
+
 
 class InjectConfig(BaseModel):
-    method: Literal["wtype", "xdotool", "xclip+paste"] = "wtype"
+    method: Literal["wtype", "xdotool", "xclip+paste", "ydotool", "wl-copy+paste"] = "wl-copy+paste"
     delay_ms: int = 50
+    paste_shortcut: Literal["ctrl+v", "ctrl+shift+v"] = "ctrl+shift+v"
 
 
 class BlitztextConfig(BaseModel):
@@ -26,6 +32,8 @@ class BlitztextConfig(BaseModel):
     trigger_mode: str = "hold"       # hold | toggle
     input_device: str = ""
     audio_device: str = "default"
+    transcribe_backend: Literal["online", "local"] = "online"
+    local_whisper_model: Literal["tiny", "base", "small", "medium"] = "small"
     modes: dict[str, ModeConfig] = Field(default_factory=lambda: {
         "normal": ModeConfig(key_code=183, key_name="KEY_F13"),
         "plus":   ModeConfig(key_code=184, key_name="KEY_F14",
@@ -64,3 +72,18 @@ def reset_config() -> BlitztextConfig:
     if p.exists():
         p.unlink()
     return load_config()
+
+
+def migrate_key_codes(config_path: Path | None = None) -> None:
+    """Migriert key_code -> key_codes für bestehende Config-Dateien (einmalig)."""
+    p = config_path or _config_path()
+    if not p.exists():
+        return
+    d = json.loads(p.read_text())
+    changed = False
+    for mode_val in d.get("modes", {}).values():
+        if not mode_val.get("key_codes") and mode_val.get("key_code"):
+            mode_val["key_codes"] = [mode_val["key_code"]]
+            changed = True
+    if changed:
+        p.write_text(json.dumps(d, indent=2))
