@@ -2,7 +2,7 @@
 import json, os
 from pathlib import Path
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Literal, Optional
 
 CONFIG_DEFAULT_PATH = Path.home() / ".config" / "transcriptor" / "config.json"
 
@@ -15,7 +15,7 @@ class ModeConfig(BaseModel):
 
 
 class InjectConfig(BaseModel):
-    method: str = "wtype"   # wtype | xdotool | xclip+paste
+    method: Literal["wtype", "xdotool", "xclip+paste"] = "wtype"
     delay_ms: int = 50
 
 
