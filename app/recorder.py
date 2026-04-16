@@ -1,5 +1,6 @@
 """Audioaufnahme via sounddevice. Produziert WAV-Bytes fuer Whisper."""
 
+import asyncio
 import io
 import threading
 
@@ -96,6 +97,14 @@ class RecordingSession:
         return _to_wav_bytes(audio, self.samplerate)
 
 
+def find_monitor_device() -> str | None:
+    """Gibt den Namen des PipeWire Monitor-Source-Geräts zurück, oder None."""
+    for dev in sd.query_devices():
+        if "monitor" in dev["name"].lower() and dev["max_input_channels"] > 0:
+            return dev["name"]
+    return None
+
+
 def _to_wav_bytes(audio: np.ndarray, samplerate: int) -> bytes:
     """Konvertiert ein NumPy-Array in WAV-Bytes.
 
@@ -109,3 +118,83 @@ def _to_wav_bytes(audio: np.ndarray, samplerate: int) -> bytes:
     buf = io.BytesIO()
     wav.write(buf, samplerate, audio)
     return buf.getvalue()
+
+
+class LiveRecordingSession:
+    """Streamt Audio kontinuierlich in 4s-WAV-Chunks via asyncio.Queue.
+
+    Verwendung:
+        session = LiveRecordingSession(device="default")
+        session.start(asyncio.get_running_loop())
+        # WS-Handler liest:
+        while True:
+            chunk = await session.queue.get()
+            if chunk is None:
+                break  # Session beendet
+            # chunk ist WAV-Bytes
+        session.stop()
+    """
+
+    CHUNK_SECONDS = 4
+
+    def __init__(
+        self,
+        samplerate: int = SAMPLERATE,
+        device: str | None = None,
+    ) -> None:
+        self.samplerate = samplerate
+        self._device = device
+        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._muted = False
+        self._stream: sd.InputStream | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._buffer: list[np.ndarray] = []
+        self._chunk_frames = samplerate * self.CHUNK_SECONDS
+
+    def start(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Startet den sounddevice-InputStream. loop nötig für thread-sichere Queue."""
+        self._loop = loop
+        self._buffer.clear()
+        self._stream = sd.InputStream(
+            samplerate=self.samplerate,
+            channels=CHANNELS,
+            dtype="int16",
+            device=self._device or None,
+            callback=self._callback,
+        )
+        self._stream.start()
+
+    def _callback(self, indata: np.ndarray, frames: int, time: object, status: object) -> None:
+        """PortAudio-Thread: Samples akkumulieren, bei vollem Chunk in Queue."""
+        if self._muted:
+            self._buffer.append(np.zeros_like(indata))
+        else:
+            self._buffer.append(indata.copy())
+
+        total = sum(a.shape[0] for a in self._buffer)
+        if total >= self._chunk_frames:
+            full = np.concatenate(self._buffer, axis=0)
+            audio = full[: self._chunk_frames]
+            tail = full[self._chunk_frames :]
+            self._buffer = [tail] if tail.shape[0] > 0 else []
+            wav_bytes = _to_wav_bytes(audio, self.samplerate)
+            if self._loop:
+                self._loop.call_soon_threadsafe(self._queue.put_nowait, wav_bytes)
+
+    def stop(self) -> None:
+        """Stoppt den Stream und legt None-Sentinel in die Queue."""
+        if self._stream:
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
+        if self._loop:
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, None)
+
+    def set_muted(self, muted: bool) -> None:
+        """Schaltet Mikrofon stumm (schreibt Stille statt echtem Audio)."""
+        self._muted = muted
+
+    @property
+    def queue(self) -> asyncio.Queue[bytes | None]:
+        """WS-Handler liest hieraus. None = Session beendet."""
+        return self._queue
