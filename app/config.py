@@ -41,23 +41,22 @@ class BlitztextConfig(BaseModel):
 
 
 def _config_path() -> Path:
-    p = Path(os.getenv("BLITZTEXT_CONFIG", str(CONFIG_DEFAULT_PATH))).expanduser()
+    return Path(os.getenv("BLITZTEXT_CONFIG", str(CONFIG_DEFAULT_PATH))).expanduser()
+
+
+def save_config(cfg: BlitztextConfig) -> None:
+    p = _config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+    p.write_text(cfg.model_dump_json(indent=2))
 
 
 def load_config() -> BlitztextConfig:
     p = _config_path()
     if p.exists():
         return BlitztextConfig.model_validate(json.loads(p.read_text()))
-    cfg = BlitztextConfig()
-    cfg.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+    cfg = BlitztextConfig(openai_api_key=os.getenv("OPENAI_API_KEY", ""))
     save_config(cfg)
     return cfg
-
-
-def save_config(cfg: BlitztextConfig) -> None:
-    _config_path().write_text(cfg.model_dump_json(indent=2))
 
 
 def reset_config() -> BlitztextConfig:

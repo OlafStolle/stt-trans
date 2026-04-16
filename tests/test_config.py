@@ -10,12 +10,14 @@ def test_load_defaults(tmp_path, monkeypatch):
     assert cfg.llm_model == "gpt-4o-mini"
     assert cfg.whisper_language == "de"
     assert "normal" in cfg.modes
+    config_file = tmp_path / "config.json"
+    assert config_file.exists(), "load_config() should auto-save defaults"
 
 def test_save_and_reload(tmp_path, monkeypatch):
     path = tmp_path / "config.json"
     monkeypatch.setenv("BLITZTEXT_CONFIG", str(path))
     cfg = load_config()
-    cfg.whisper_language = "en"
+    cfg = cfg.model_copy(update={"whisper_language": "en"})
     save_config(cfg)
     cfg2 = load_config()
     assert cfg2.whisper_language == "en"
@@ -24,7 +26,7 @@ def test_reset(tmp_path, monkeypatch):
     path = tmp_path / "config.json"
     monkeypatch.setenv("BLITZTEXT_CONFIG", str(path))
     cfg = load_config()
-    cfg.whisper_language = "en"
+    cfg = cfg.model_copy(update={"whisper_language": "en"})
     save_config(cfg)
     reset_config()
     cfg2 = load_config()
