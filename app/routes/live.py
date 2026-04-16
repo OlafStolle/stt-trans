@@ -27,6 +27,16 @@ _live_mic_session: LiveRecordingSession | None = None
 _live_desktop_session: LiveRecordingSession | None = None
 _mic_subscribers: set[asyncio.Queue] = set()
 _desktop_subscribers: set[asyncio.Queue] = set()
+_pump_tasks: set[asyncio.Task] = set()
+_cached_config = None
+
+
+def _get_config():
+    global _cached_config
+    if _cached_config is None:
+        from app.config import load_config
+        _cached_config = load_config()
+    return _cached_config
 
 _LANG_NORMALIZE = {
     "german": "de",
@@ -56,10 +66,19 @@ def set_sessions(
 
 async def start_pumps() -> None:
     """Startet Pump-Tasks. Muss aus async-Kontext aufgerufen werden (via create_task)."""
+    # Cancel any existing pump tasks before starting new ones
+    for task in list(_pump_tasks):
+        task.cancel()
+    _pump_tasks.clear()
+
     if _live_mic_session:
-        asyncio.create_task(_pump_session(_live_mic_session, _mic_subscribers))
+        t = asyncio.create_task(_pump_session(_live_mic_session, _mic_subscribers))
+        _pump_tasks.add(t)
+        t.add_done_callback(_pump_tasks.discard)
     if _live_desktop_session:
-        asyncio.create_task(_pump_session(_live_desktop_session, _desktop_subscribers))
+        t = asyncio.create_task(_pump_session(_live_desktop_session, _desktop_subscribers))
+        _pump_tasks.add(t)
+        t.add_done_callback(_pump_tasks.discard)
 
 
 # ---------------------------------------------------------------------------
@@ -94,8 +113,7 @@ async def _transcribe_with_lang(wav_bytes: bytes) -> tuple[str, str]:
     Verwendet verbose_json fuer Sprachdetektierung (Online-Pfad).
     Lokaler Pfad: faster-whisper info.language.
     """
-    from app.config import load_config
-    cfg = load_config()
+    cfg = _get_config()
 
     if cfg.transcribe_backend == "local":
         try:
@@ -232,7 +250,11 @@ async def ws_live_mic(ws: WebSocket) -> None:
             pass
 
     try:
-        await asyncio.gather(handle_client(), stream())
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(handle_client())
+            tg.create_task(stream())
+    except* (WebSocketDisconnect, Exception):
+        pass
     finally:
         _mic_subscribers.discard(my_queue)
 
@@ -287,6 +309,10 @@ async def ws_live_desktop(ws: WebSocket) -> None:
             pass
 
     try:
-        await asyncio.gather(handle_client(), stream())
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(handle_client())
+            tg.create_task(stream())
+    except* (WebSocketDisconnect, Exception):
+        pass
     finally:
         _desktop_subscribers.discard(my_queue)
