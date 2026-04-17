@@ -56,7 +56,8 @@ def create_app() -> FastAPI:
         description="Systemweiter Diktierdienst für Linux",
         lifespan=lifespan,
     )
-    app.add_middleware(CORSMiddleware, allow_origins=["*"],
+    app.add_middleware(CORSMiddleware,
+                       allow_origins=["http://localhost:8765", "http://127.0.0.1:8765"],
                        allow_methods=["*"], allow_headers=["*"])
     app.include_router(config_router)
     app.include_router(health_router)

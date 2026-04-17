@@ -58,6 +58,10 @@ def save_config(cfg: BlitztextConfig) -> None:
     p = _config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(cfg.model_dump_json(indent=2))
+    try:
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
 
 
 def load_config() -> BlitztextConfig:
