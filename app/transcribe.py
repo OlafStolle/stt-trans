@@ -62,7 +62,14 @@ class FasterWhisperEngine:
         """Transcribe a WAV file; returns joined segment text."""
         if self._model is None:
             raise RuntimeError("Model not loaded — call ensure_loaded() first")
-        segments, _ = self._model.transcribe(wav_path, language=language)
+        segments, info = self._model.transcribe(
+            wav_path,
+            language=language,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.6,
+        )
+        if info.no_speech_prob > 0.8:
+            return ""
         return " ".join(seg.text.strip() for seg in segments).strip()
 
     def unload(self) -> None:
