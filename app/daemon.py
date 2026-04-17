@@ -23,8 +23,10 @@ class BlitztextDaemon:
         self._pressed_keys: set[int] = set()
         self._live_mic_session: LiveRecordingSession | None = None
         self._live_desktop_session: LiveRecordingSession | None = None
-        self._key_down_time: float = 0.0
+        import time as _t
+        self._key_down_time: float = _t.monotonic()  # initialized to now to avoid bogus held times
         self._wait_for_next_up: bool = False  # Toggle-Verhalten bei kurzen Taps
+        self._startup_flush: bool = True  # ignore stale events from kernel buffer at startup
 
     def _key_to_mode(self, key_code: int) -> str | None:
         for mode_name, mode_cfg in self.cfg.modes.items():
@@ -145,13 +147,21 @@ class BlitztextDaemon:
 
                 # Pressed-Keys-Set aktualisieren
                 import time as _time
+
+                # Discard stale UP/REPEAT events buffered before daemon started
+                if self._startup_flush:
+                    if event.value == 1:
+                        self._startup_flush = False  # first real DOWN → flush done
+                    else:
+                        continue  # skip UP/REPEAT until first DOWN seen
+
                 _val_str = {0: "UP", 1: "DOWN", 2: "REPEAT"}.get(event.value, str(event.value))
                 logger.debug("KEY %s code=%d pressed=%s", _val_str, event.code, self._pressed_keys)
                 if event.value == 1:
                     self._pressed_keys.add(event.code)
                     self._key_down_time = _time.monotonic()
                 elif event.value == 0:
-                    _held = _time.monotonic() - getattr(self, "_key_down_time", _time.monotonic())
+                    _held = _time.monotonic() - self._key_down_time
                     logger.info("KEY_UP code=%d held=%.3fs", event.code, _held)
                     self._pressed_keys.discard(event.code)
 
@@ -164,9 +174,9 @@ class BlitztextDaemon:
                         asyncio.create_task(self._toggle_live())
                         continue
 
-                    # Aufbauende Live-Combo: PTT unterdrücken wenn mehrere Tasten
-                    # Teilmenge der Live-Combo sind (kein vorzeitiger PTT bei Einzel-Keys)
-                    if live_combo and len(self._pressed_keys) > 1 and self._pressed_keys <= live_combo:
+                    # Aufbauende Live-Combo: PTT unterdrücken solange gedrückte Keys
+                    # noch eine Teilmenge der Live-Combo sein könnten
+                    if live_combo and self._pressed_keys <= live_combo:
                         continue
 
                     # PTT während Live ignorieren

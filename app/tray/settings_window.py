@@ -376,8 +376,11 @@ class SettingsWindow:
         if self._listening:
             return
         self._listening = True
-        self._stop_daemon()
 
+        # Update UI immediately — no blocking in main thread.
+        # evdev allows multiple simultaneous readers, so daemon does not need
+        # to be stopped; stopping it here blocked the tkinter thread and caused
+        # key events to be missed (SayoDevice KEY_UP fires after ~120 ms).
         for mk, btn in self._detect_btns.items():
             if mk == mode_key:
                 btn.configure(text="Drücken...", bg=BLUE, fg="white")

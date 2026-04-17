@@ -102,6 +102,7 @@ const WS_BASE = `ws://${location.host}`;
 let micWs = null, desktopWs = null;
 let micMuted = false;
 let firstMicChunk = true, firstDesktopChunk = true;
+let stopped = false;
 
 // Clock
 setInterval(() => {
@@ -123,7 +124,11 @@ function setLang(stream, lang) {
 }
 
 function stopLive() {
+  stopped = true;
+  if (micWs) micWs.close();
+  if (desktopWs) desktopWs.close();
   fetch('/live/stop', { method: 'POST' });
+  updateStatus(false);
 }
 
 function toggleMic() {
@@ -189,14 +194,16 @@ function connectWs(stream) {
 
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
-    if (data.done || data.error || !data.text) return;
+    if (data.done) { stopped = true; return; }
+    if (data.error) return;  // no session yet — onclose handles retry
+    if (!data.text) return;
     appendChunk(`${stream}-transcript`, data);
   };
 
   ws.onclose = () => {
     dot.className = 'ws-dot';
     updateStatus(false);
-    setTimeout(() => connectWs(stream), 3000);
+    if (!stopped) setTimeout(() => connectWs(stream), 3000);
   };
 
   ws.onerror = () => ws.close();

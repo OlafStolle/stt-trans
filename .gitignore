@@ -10,3 +10,7 @@ build/
 uploads/
 transcriptions/
 .worktrees/
+.claude/
+docs/chat-log.md
+docs/superpowers/
+*.service

@@ -25,12 +25,22 @@ class BlitztextTrayApp:
         icon_image = create_tray_icon(64)
         menu = pystray.Menu(
             pystray.MenuItem("Einstellungen öffnen", self._open_settings, default=True),
+            pystray.MenuItem("Neustart", self._restart_daemon),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Beenden", self._quit),
         )
         self._icon = pystray.Icon("stt-trans", icon_image, "stt-trans", menu)
         threading.Thread(target=self._poll_status, daemon=True).start()
         self._icon.run()
+
+    def _restart_daemon(self, icon=None, item=None) -> None:
+        """Restart the stt-trans systemd user service."""
+        import subprocess
+        subprocess.run(
+            ["systemctl", "--user", "restart", "stt-trans.service"],
+            capture_output=True,
+            timeout=15,
+        )
 
     def _open_settings(self, icon=None, item=None) -> None:
         # tkinter mainloop muss in eigenem Thread laufen (pystray blockiert main thread)
