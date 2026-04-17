@@ -23,6 +23,8 @@ class BlitztextDaemon:
         self._pressed_keys: set[int] = set()
         self._live_mic_session: LiveRecordingSession | None = None
         self._live_desktop_session: LiveRecordingSession | None = None
+        self._key_down_time: float = 0.0
+        self._wait_for_next_up: bool = False  # Toggle-Verhalten bei kurzen Taps
 
     def _key_to_mode(self, key_code: int) -> str | None:
         for mode_name, mode_cfg in self.cfg.modes.items():
@@ -33,12 +35,19 @@ class BlitztextDaemon:
     def _key_to_mode_combo(self) -> str | None:
         best_mode: str | None = None
         best_len: int = 0
+        best_has_key_name: bool = False
         for mode_name, mode_cfg in self.cfg.modes.items():
             combo = set(mode_cfg.effective_key_codes)
             if combo and combo <= self._pressed_keys:
+                has_key_name = bool(mode_cfg.key_name)
                 if len(combo) > best_len:
                     best_len = len(combo)
                     best_mode = mode_name
+                    best_has_key_name = has_key_name
+                elif len(combo) == best_len and has_key_name and not best_has_key_name:
+                    # Gleichstand: bevorzuge Modus mit gesetztem key_name
+                    best_mode = mode_name
+                    best_has_key_name = True
         return best_mode
 
     async def _toggle_live(self) -> None:
@@ -135,9 +144,15 @@ class BlitztextDaemon:
                     continue
 
                 # Pressed-Keys-Set aktualisieren
+                import time as _time
+                _val_str = {0: "UP", 1: "DOWN", 2: "REPEAT"}.get(event.value, str(event.value))
+                logger.debug("KEY %s code=%d pressed=%s", _val_str, event.code, self._pressed_keys)
                 if event.value == 1:
                     self._pressed_keys.add(event.code)
+                    self._key_down_time = _time.monotonic()
                 elif event.value == 0:
+                    _held = _time.monotonic() - getattr(self, "_key_down_time", _time.monotonic())
+                    logger.info("KEY_UP code=%d held=%.3fs", event.code, _held)
                     self._pressed_keys.discard(event.code)
 
                 audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else "pulse"
@@ -207,11 +222,19 @@ class BlitztextDaemon:
                         if mode_cfg and self.cfg.trigger_mode == "hold":
                             combo = set(mode_cfg.effective_key_codes)
                             if event.code in combo:  # Einer der Combo-Keys losgelassen
-                                wav = self._session.stop()
-                                mode = self._active_mode
-                                self._session = None
-                                self._active_mode = None
-                                asyncio.create_task(self._run_pipeline(mode, wav))
+                                held_s = _time.monotonic() - self._key_down_time
+                                if held_s < 0.4 and not self._wait_for_next_up:
+                                    # Kurzer Tap (<400ms): in Toggle-Modus wechseln
+                                    self._wait_for_next_up = True
+                                    logger.info("Kurzer Tap (%.3fs) — warte auf nächsten UP zum Stoppen", held_s)
+                                else:
+                                    # Langer Hold oder zweiter UP → Aufnahme stoppen
+                                    self._wait_for_next_up = False
+                                    wav = self._session.stop()
+                                    mode = self._active_mode
+                                    self._session = None
+                                    self._active_mode = None
+                                    asyncio.create_task(self._run_pipeline(mode, wav))
 
         except Exception as e:
             logger.error("Daemon loop error: %s", e)

@@ -16,6 +16,7 @@ from app.routes.live import router as live_router
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
+logging.getLogger("stt-trans.daemon").setLevel(logging.DEBUG)
 
 
 class _StatusFilter(logging.Filter):
