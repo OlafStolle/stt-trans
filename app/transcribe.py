@@ -68,7 +68,8 @@ class FasterWhisperEngine:
             condition_on_previous_text=False,
             no_speech_threshold=0.6,
         )
-        if info.no_speech_prob > 0.8:
+        # Zu kurze Aufnahme nach VAD → Stille, kein Text zurückgeben
+        if info.duration_after_vad < 0.3:
             return ""
         return " ".join(seg.text.strip() for seg in segments).strip()
 
