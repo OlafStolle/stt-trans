@@ -165,19 +165,31 @@ class BlitztextDaemon:
                     trigger = self.cfg.trigger_mode
 
                     if trigger == "hold" and self._active_mode is None:
-                        self._active_mode = mode_name
-                        self._session = RecordingSession(device=audio_device)
-                        self._session.start()
-                        notify("recording", f"Aufnahme ({mode_name})...")
-                        logger.info("Recording started (hold): %s", mode_name)
+                        try:
+                            self._session = RecordingSession(device=audio_device)
+                            self._session.start()
+                            self._active_mode = mode_name
+                            notify("recording", f"Aufnahme ({mode_name})...")
+                            logger.info("Recording started (hold): %s", mode_name)
+                        except Exception as rec_err:
+                            logger.error("Recording start failed: %s", rec_err)
+                            notify("error", f"Mikrofon nicht gefunden: {audio_device}")
+                            self._session = None
+                            self._active_mode = None
 
                     elif trigger == "toggle":
                         if not self._toggle_recording:
-                            self._toggle_recording = True
-                            self._active_mode = mode_name
-                            self._session = RecordingSession(device=audio_device)
-                            self._session.start()
-                            notify("recording", f"Aufnahme ({mode_name})...")
+                            try:
+                                self._session = RecordingSession(device=audio_device)
+                                self._session.start()
+                                self._toggle_recording = True
+                                self._active_mode = mode_name
+                                notify("recording", f"Aufnahme ({mode_name})...")
+                            except Exception as rec_err:
+                                logger.error("Recording start failed: %s", rec_err)
+                                notify("error", f"Mikrofon nicht gefunden: {audio_device}")
+                                self._session = None
+                                self._active_mode = None
                             logger.info("Recording started (toggle): %s", mode_name)
                         else:
                             self._toggle_recording = False
