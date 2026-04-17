@@ -90,6 +90,16 @@ async def transcribe_audio_local(
     loop = asyncio.get_event_loop()
 
     def _run() -> str:
+        import wave, struct
+        # Mindest-Aufnahmedauer prüfen — Whisper halluziniert bei < 1s
+        try:
+            with wave.open(io.BytesIO(wav_bytes)) as wf:
+                duration_s = wf.getnframes() / wf.getframerate()
+            if duration_s < 1.0:
+                logger.debug("Audio zu kurz (%.2fs) — übersprungen", duration_s)
+                return ""
+        except Exception:
+            pass
         _fw_engine.ensure_loaded(model_size)
         # Write to a temporary WAV file that faster-whisper can read
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
