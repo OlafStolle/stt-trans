@@ -107,7 +107,7 @@ class SettingsWindow:
         win = tk.Tk()
         self._win = win
         win.title("stt-trans Einstellungen")
-        win.geometry("620x540")
+        win.geometry("620x610")
         win.configure(bg=BG)
         win.resizable(False, False)
         win.protocol("WM_DELETE_WINDOW", self._close)
