@@ -67,7 +67,6 @@ class FasterWhisperEngine:
             language=language,
             condition_on_previous_text=False,
             no_speech_threshold=0.6,
-            vad_filter=True,
         )
         # Zu kurze Aufnahme nach VAD → Stille, kein Text zurückgeben
         if info.duration_after_vad < 0.3:
