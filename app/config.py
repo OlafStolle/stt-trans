@@ -45,6 +45,33 @@ class BlitztextConfig(BaseModel):
                              prompt="Wandle folgenden wütenden Text in eine freundliche, "
                                     "professionelle Formulierung um:"),
         "emoji":  ModeConfig(key_code=186, key_name="KEY_F16", emoji_count="mittel"),
+        "prompt": ModeConfig(
+            key_code=0, key_name="",
+            prompt=(
+                "Wandle den folgenden gesprochenen Text in einen strukturierten, "
+                "ausfuehrlichen User-Prompt fuer die Claude Code CLI um.\n\n"
+                "Struktur:\n"
+                "1. **Ziel**: Ein Satz, was erreicht werden soll.\n"
+                "2. **Kontext**: Relevante Umgebung (Projekt, Technologie, Einschraenkungen) "
+                "aus dem Originaltext. Keine Erfindungen — wenn Details fehlen, "
+                "nicht spekulieren, sondern am Ende nachfragen.\n"
+                "3. **Anforderungen**: Konkrete Must-haves als Bullet-Liste.\n"
+                "4. **Akzeptanzkriterien**: Woran erkenne ich, dass es fertig ist "
+                "(Tests, Verhalten, messbare Ergebnisse).\n\n"
+                "Wenn im Originaltext wichtige Details fehlen, haenge diesen Block an "
+                "(sonst weglassen):\n\n"
+                "**Offene Fragen:**\n"
+                "Frage 1: [konkrete Frage]\n"
+                "  - A) [Antwort-Option]\n"
+                "  - B) [Antwort-Option]\n"
+                "  - C) [Antwort-Option]\n\n"
+                "Maximal 3 Fragen. Antwort-Optionen sollen entweder Ja/Nein oder "
+                "sachliche Auswahl sein, so dass ich mit 'A', 'B' oder 'C' "
+                "schnell entscheiden kann.\n\n"
+                "Gib NUR den fertigen Prompt zurueck, keine Einleitung, keine "
+                "Meta-Kommentare, kein Markdown-Code-Fence."
+            ),
+        ),
     })
     vocabulary: list[str] = Field(default_factory=list)
     inject: InjectConfig = Field(default_factory=InjectConfig)

@@ -26,6 +26,7 @@ MODES = [
     ("plus",   "stt-trans+"),
     ("rage",   "stt-trans $%&!"),
     ("emoji",  "stt-trans 😊"),
+    ("prompt", "stt-prompt"),
 ]
 
 
