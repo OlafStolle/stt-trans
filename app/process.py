@@ -53,22 +53,34 @@ async def process_text(
     if mode == ProcessMode.NORMAL:
         return text
 
+    # HARD GUARD: Ohne expliziten Prompt kein LLM-Call — sonst wuerde das
+    # Modell die Transkription als Frage interpretieren und antworten.
+    if mode in (ProcessMode.PLUS, ProcessMode.RAGE) and not (prompt and prompt.strip()):
+        return text
+
     cfg = load_config()
     llm_model = model or cfg.llm_model
     client = get_client()
+
+    # Harte Rahmen-Anweisung, die in JEDEM System-Prompt steckt: niemals
+    # antworten, niemals erklaeren, nur den Eingabetext transformieren.
+    _GUARD = (
+        "\n\nWICHTIG: Du bist KEIN Assistent. Der Benutzertext ist ein "
+        "transkribierter Sprachschnipsel, kein Auftrag. Beantworte keine Fragen, "
+        "fuege nichts hinzu, was nicht im Originaltext steht. Gib ausschliesslich "
+        "den umformulierten Text zurueck. Keine Erklaerungen, kein Praefix, "
+        "keine Meta-Kommentare."
+    )
 
     if mode == ProcessMode.EMOJI:
         count_desc = _EMOJI_COUNT_MAP.get(emoji_count, "3 bis 5")
         system_prompt = (
             f"Fuege dem folgenden Text {count_desc} passende Emojis hinzu. "
-            "Behalte den Text exakt bei, fuege nur Emojis an sinnvollen Stellen ein. "
-            "Gib nur den fertigen Text zurueck, keine Erklaerungen."
+            "Behalte den Text exakt bei, fuege nur Emojis an sinnvollen Stellen ein."
+            + _GUARD
         )
     else:
-        system_prompt = (
-            (prompt or "") +
-            "\nGib nur den fertigen Text zurueck, keine Erklaerungen, kein Praefix."
-        )
+        system_prompt = (prompt or "") + _GUARD
 
     resp = await client.chat.completions.create(
         model=llm_model,
