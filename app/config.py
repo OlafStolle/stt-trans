@@ -37,8 +37,10 @@ class BlitztextConfig(BaseModel):
     modes: dict[str, ModeConfig] = Field(default_factory=lambda: {
         "normal": ModeConfig(key_code=183, key_name="KEY_F13"),
         "plus":   ModeConfig(key_code=184, key_name="KEY_F14",
-                             prompt="Formuliere folgenden gesprochenen Text schriftlich um. "
-                                    "Behalte den Sinn exakt bei, mache ihn nur schriftlicher:"),
+                             prompt="Formuliere folgenden gesprochenen Text nur geringfuegig schriftlich um. "
+                                    "Behalte den Wortlaut weitgehend bei. Korrigiere nur offensichtliche "
+                                    "Versprecher, Fuellwoerter und Grammatik. Keine inhaltlichen "
+                                    "Ergaenzungen, keine Umformulierungen, die den Stil veraendern."),
         "rage":   ModeConfig(key_code=185, key_name="KEY_F15",
                              prompt="Wandle folgenden wütenden Text in eine freundliche, "
                                     "professionelle Formulierung um:"),
