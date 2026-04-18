@@ -45,7 +45,6 @@ def inject_text(text: str, method: str = "xdotool", delay_ms: int = 50, paste_sh
     if not text:
         return
     logger.info("inject_text: method=%s text=%r", method, text[:40])
-    _copy_to_clipboard(text)
     try:
         if method == "xdotool":
             subprocess.run(

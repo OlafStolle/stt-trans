@@ -8,7 +8,7 @@ from app.config import BlitztextConfig, load_config
 from app.recorder import RecordingSession, LiveRecordingSession, find_monitor_device
 from app.transcribe import transcribe_audio
 from app.process import process_text, ProcessMode
-from app.inject import inject_text, notify
+from app.inject import inject_text, notify, _copy_to_clipboard
 from app.routes import live
 
 logger = logging.getLogger("stt-trans.daemon")
@@ -115,6 +115,10 @@ class BlitztextDaemon:
                 prompt=mode_cfg.prompt,
                 emoji_count=mode_cfg.emoji_count,
             )
+            # Clipboard nur setzen wenn die inject-Methode das nicht selbst tut,
+            # sonst blockieren sich die beiden wl-copy/xclip Daemons gegenseitig.
+            if self.cfg.inject.method not in ("wl-copy+paste", "xclip+paste"):
+                _copy_to_clipboard(text)
             inject_text(text, method=self.cfg.inject.method,
                         delay_ms=self.cfg.inject.delay_ms)
             notify("done", f"Eingefügt: {text[:40]}...")
