@@ -50,6 +50,11 @@ def _listen_for_key(timeout: float = 8.0) -> dict | None:
                     for event in dev.read():
                         if event.type != evdev.ecodes.EV_KEY:
                             continue
+                        # Maus-/Gamepad-Buttons (BTN_*) haben code >= 0x100 —
+                        # die duerfen keine Shortcut-Combo bilden, sonst klaut
+                        # der Mausklick auf den "Druecken"-Button selbst die Detection.
+                        if event.code >= 0x100:
+                            continue
                         raw = evdev.ecodes.KEY.get(event.code, f"KEY_{event.code}")
                         key_name = raw[0] if isinstance(raw, list) else raw
                         if event.value == 1:
