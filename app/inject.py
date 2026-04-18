@@ -1,16 +1,51 @@
 # app/inject.py
 """Text in aktives Fenster einfügen + Desktop-Benachrichtigungen."""
+import os
+import shutil
 import subprocess
 import logging
 import time
 
 logger = logging.getLogger("stt-trans.inject")
 
+_CLIPBOARD_TOOLS = (
+    # (binary, argv_builder, needs_wayland)
+    ("wl-copy", lambda: ["wl-copy"], True),
+    ("xclip",   lambda: ["xclip", "-selection", "clipboard"], False),
+    ("xsel",    lambda: ["xsel", "-b", "-i"], False),
+)
+
+
+def _copy_to_clipboard(text: str) -> None:
+    """Kopiert text in die System-Zwischenablage. Fehler werden nur geloggt."""
+    if not text:
+        return
+    is_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+    for binary, build_argv, needs_wayland in _CLIPBOARD_TOOLS:
+        if needs_wayland and not is_wayland:
+            continue
+        if shutil.which(binary) is None:
+            continue
+        try:
+            subprocess.run(
+                build_argv(),
+                input=text.encode(),
+                check=True,
+                capture_output=True,
+            )
+            logger.debug("clipboard copy via %s (%d chars)", binary, len(text))
+            return
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logger.warning("clipboard copy via %s failed: %s", binary, e)
+    logger.warning("Kein Clipboard-Tool (wl-copy/xclip/xsel) gefunden — Text nicht kopiert.")
+
+
 def inject_text(text: str, method: str = "xdotool", delay_ms: int = 50, paste_shortcut: str = "ctrl+shift+v") -> None:
     """Fügt text in das aktuell fokussierte Fenster ein."""
     if not text:
         return
     logger.info("inject_text: method=%s text=%r", method, text[:40])
+    _copy_to_clipboard(text)
     try:
         if method == "xdotool":
             subprocess.run(
