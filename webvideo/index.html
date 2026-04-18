@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Tab-Recorder</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; background: #1a1a1a; color: #eee; }
+  h1 { font-size: 1.4rem; }
+  button { font-size: 1rem; padding: .6rem 1.2rem; margin: .3rem; border: 0; border-radius: 6px; cursor: pointer; }
+  .rec { background: #c33; color: #fff; }
+  .audio { background: #36c; color: #fff; }
+  .stop { background: #555; color: #fff; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  #status { margin-top: 1rem; padding: .6rem 1rem; background: #222; border-radius: 6px; }
+  #downloads a { display: inline-block; margin: .3rem .3rem 0 0; padding: .4rem .8rem; background: #2a5; color: #fff; text-decoration: none; border-radius: 6px; }
+  .preview { margin-top: 1rem; background: #222; padding: .8rem; border-radius: 6px; }
+  .preview video, .preview audio { width: 100%; max-height: 300px; background: #000; border-radius: 4px; }
+  .preview .meta { font-size: .85rem; color: #aaa; margin-top: .3rem; }
+  ol { background: #222; padding: 1rem 1rem 1rem 2.5rem; border-radius: 6px; font-size: .9rem; }
+  ol li { margin: .3rem 0; }
+</style>
+</head>
+<body>
+
+<h1>Tab-Recorder</h1>
+<p>Nimmt einen Edge-Tab auf — Video+Audio oder nur Audio.</p>
+
+<ol>
+  <li>Button drücken.</li>
+  <li>Im Dialog <b>„Chromium-Registerkarte"</b> wählen, Edge-Tab anklicken.</li>
+  <li>Checkbox <b>„Registerkartenaudio freigeben"</b> anhaken.</li>
+  <li>„Teilen" drücken → Aufnahme läuft.</li>
+  <li>„Stopp" klicken → Download-Link erscheint.</li>
+</ol>
+
+<button id="recVideo" class="rec">⏺ Video + Audio</button>
+<button id="recAudio" class="audio">🎵 Nur Audio</button>
+<button id="stop" class="stop" disabled>⏹ Stopp</button>
+
+<div id="status">Bereit.</div>
+<div id="downloads"></div>
+
+<script>
+let rec, chunks = [], activeStream = null, mode = null, startTime = 0, timer = null, bytes = 0;
+const statusEl = document.getElementById('status');
+const downloads = document.getElementById('downloads');
+
+async function start(withVideo) {
+  try {
+    const constraints = {
+      video: withVideo ? { frameRate: 30 } : true,
+      audio: true,
+    };
+    const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
+
+    if (!stream.getAudioTracks().length) {
+      stream.getTracks().forEach(t => t.stop());
+      statusEl.textContent = '⚠ Kein Tab-Audio gewählt — bitte Checkbox „Registerkartenaudio freigeben" aktivieren.';
+      return;
+    }
+
+    let finalStream = stream;
+    if (!withVideo) {
+      // audio-only: video-track verwerfen
+      stream.getVideoTracks().forEach(t => t.stop());
+      finalStream = new MediaStream(stream.getAudioTracks());
+    }
+
+    const mime = withVideo
+      ? (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') ? 'video/webm;codecs=vp9,opus' : 'video/webm')
+      : (MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm');
+
+    rec = new MediaRecorder(finalStream, { mimeType: mime });
+    chunks = [];
+    bytes = 0;
+    rec.ondataavailable = e => {
+      if (e.data.size) {
+        chunks.push(e.data);
+        bytes += e.data.size;
+        console.log(`chunk #${chunks.length}: ${e.data.size} bytes, total ${bytes}`);
+      }
+    };
+    rec.onstop = () => {
+      const blob = new Blob(chunks, { type: mime });
+      const url = URL.createObjectURL(blob);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const name = `${withVideo ? 'tab-video' : 'tab-audio'}-${ts}.webm`;
+
+      // Preview direkt im UI
+      const preview = document.createElement('div');
+      preview.className = 'preview';
+      const media = document.createElement(withVideo ? 'video' : 'audio');
+      media.controls = true;
+      media.src = url;
+      preview.appendChild(media);
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${chunks.length} Chunks, ${(blob.size / 1024 / 1024).toFixed(2)} MB, ${mime}`;
+      preview.appendChild(meta);
+      downloads.prepend(preview);
+
+      // Download-Link darunter
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.textContent = `⬇ ${name}`;
+      preview.appendChild(a);
+
+      console.log(`STOP: ${chunks.length} chunks, ${blob.size} bytes, mime=${mime}`);
+      if (blob.size === 0) {
+        statusEl.textContent = '⚠ Blob ist 0 Bytes — es wurde NICHTS aufgenommen!';
+      } else {
+        statusEl.textContent = `✅ Aufnahme OK: ${chunks.length} Chunks, ${(blob.size / 1024 / 1024).toFixed(2)} MB.`;
+      }
+
+      finalStream.getTracks().forEach(t => t.stop());
+    };
+
+    // User-Stop via Browser (z.B. „Freigabe beenden")
+    stream.getTracks().forEach(t => t.addEventListener('ended', () => {
+      if (rec && rec.state === 'recording') stopRec();
+    }));
+
+    activeStream = finalStream;
+    mode = withVideo ? 'video' : 'audio';
+    rec.start(1000);
+    startTime = Date.now();
+    timer = setInterval(updateStatus, 500);
+    updateStatus();
+    toggleButtons(true);
+  } catch (e) {
+    statusEl.textContent = `Fehler: ${e.message}`;
+  }
+}
+
+function updateStatus() {
+  const s = Math.floor((Date.now() - startTime) / 1000);
+  const mm = String(Math.floor(s / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  const mb = (bytes / 1024 / 1024).toFixed(2);
+  statusEl.textContent = `⏺ Aufnahme (${mode}) läuft — ${mm}:${ss} | ${chunks.length} Chunks | ${mb} MB`;
+}
+
+function stopRec() {
+  if (rec && rec.state === 'recording') rec.stop();
+  if (timer) { clearInterval(timer); timer = null; }
+  toggleButtons(false);
+  statusEl.textContent = 'Gestoppt — Download bereit.';
+}
+
+function toggleButtons(recording) {
+  document.getElementById('recVideo').disabled = recording;
+  document.getElementById('recAudio').disabled = recording;
+  document.getElementById('stop').disabled = !recording;
+}
+
+document.getElementById('recVideo').onclick = () => start(true);
+document.getElementById('recAudio').onclick = () => start(false);
+document.getElementById('stop').onclick = stopRec;
+</script>
+</body>
+</html>
