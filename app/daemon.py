@@ -111,12 +111,18 @@ class BlitztextDaemon:
                 return
 
             mode_cfg = self.cfg.modes[mode_name]
-            text = await process_text(
-                text,
-                ProcessMode(mode_name),
-                prompt=mode_cfg.prompt,
-                emoji_count=mode_cfg.emoji_count,
-            )
+            try:
+                text = await process_text(
+                    text,
+                    ProcessMode(mode_name),
+                    prompt=mode_cfg.prompt,
+                    emoji_count=mode_cfg.emoji_count,
+                )
+            except Exception as llm_err:
+                logger.error("LLM post-process failed (%s) — Roh-Transkript in Clipboard", llm_err)
+                _copy_to_clipboard(text)
+                notify("error", f"LLM-Fehler — Roh-Text in Zwischenablage ({len(text)} Zeichen)")
+                return
             # Clipboard nur setzen wenn die inject-Methode das nicht selbst tut,
             # sonst blockieren sich die beiden wl-copy/xclip Daemons gegenseitig.
             if self.cfg.inject.method not in ("wl-copy+paste", "xclip+paste"):
