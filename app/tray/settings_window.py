@@ -286,12 +286,20 @@ class SettingsWindow:
         self._model_combo = ttk.Combobox(
             row_backend,
             textvariable=self._model_var,
-            values=["small", "medium"],
+            values=["tiny", "base", "small", "medium", "large-v3"],
             state="readonly",
-            width=8,
+            width=10,
             font=(FONT, 9),
         )
         self._model_combo.pack(side="left", padx=10)
+        self._model_combo.bind("<<ComboboxSelected>>",
+                               lambda e: self._update_whisper_desc())
+
+        self._whisper_desc_lbl = tk.Label(
+            frame, text="", bg=BG, fg=MUTED, font=(FONT, 8), anchor="w",
+        )
+        self._whisper_desc_lbl.pack(anchor="w", padx=24, pady=(0, 2))
+        self._update_whisper_desc()
 
         self._backend_warn_lbl = tk.Label(
             frame,
@@ -344,8 +352,16 @@ class SettingsWindow:
             values=[], state="readonly", width=28, font=(FONT, 9),
         )
         self._llm_model_combo.pack(side="left", padx=10)
+        self._llm_model_combo.bind("<<ComboboxSelected>>",
+                                   lambda e: self._update_llm_desc())
+
+        self._llm_desc_lbl = tk.Label(
+            frame, text="", bg=BG, fg=MUTED, font=(FONT, 8), anchor="w",
+        )
+        self._llm_desc_lbl.pack(anchor="w", padx=24, pady=(0, 2))
 
         self._refresh_llm_provider_buttons()
+        self._update_llm_desc()
 
         # ── Mikrofon-Auswahl ─────────────────────────────────────────────
         tk.Label(frame, text="MIKROFON", bg=BG, fg=MUTED,
@@ -404,6 +420,41 @@ class SettingsWindow:
     _OLLAMA_FALLBACK = ["gemma4:latest", "qwen3.5:latest", "qwen2.5:3b"]
     _CLAUDE_MODELS = ["haiku", "sonnet", "opus"]
 
+    _WHISPER_INFO = {
+        "tiny":     "39 MB — sehr schnell, ungenau",
+        "base":     "74 MB — schnell, mittlere Genauigkeit",
+        "small":    "244 MB — empfohlen, gute Balance",
+        "medium":   "769 MB — praeziser, ~2x langsamer als small",
+        "large-v3": "1.5 GB — beste Genauigkeit, am langsamsten",
+    }
+
+    _LLM_INFO = {
+        # OpenAI
+        "gpt-4o-mini": "OpenAI — guenstig, schnell, ~1s",
+        "gpt-4o":      "OpenAI — staerker, ~2s, kostet mehr",
+        "gpt-4-turbo": "OpenAI — alt, eher fuer Kompatibilitaet",
+        # Ollama
+        "gemma4:latest":    "Google Gemma 4 — allround, ~4 GB, ~3-5s lokal",
+        "gemma4:e2b":       "Gemma 4 Edge — etwas kompakter",
+        "gemma3n:e4b":      "Gemma 3 Nano Edge — leicht",
+        "qwen3.5:latest":   "Alibaba Qwen 3.5 — multilingual stark",
+        "deepseek-r1:14b":  "DeepSeek R1 — gross, denkt sichtbar, langsam",
+        # Claude CLI
+        "haiku":  "Claude Haiku via CLI — gratis (Max-Plan), ~12s Startup",
+        "sonnet": "Claude Sonnet via CLI — staerker, gleicher Startup",
+        "opus":   "Claude Opus via CLI — top Qualitaet, gleicher Startup",
+    }
+
+    def _update_whisper_desc(self) -> None:
+        if not self._model_var or not getattr(self, "_whisper_desc_lbl", None):
+            return
+        self._whisper_desc_lbl.config(text=self._WHISPER_INFO.get(self._model_var.get(), ""))
+
+    def _update_llm_desc(self) -> None:
+        if not self._llm_model_var or not getattr(self, "_llm_desc_lbl", None):
+            return
+        self._llm_desc_lbl.config(text=self._LLM_INFO.get(self._llm_model_var.get(), ""))
+
     def _set_llm_provider(self, provider: str) -> None:
         if self._llm_provider_var:
             self._llm_provider_var.set(provider)
@@ -429,15 +480,24 @@ class SettingsWindow:
         # Wenn aktueller Wert nicht in neuer Liste, ersten auswaehlen
         if self._llm_model_var and self._llm_model_var.get() not in models:
             self._llm_model_var.set(models[0])
+        self._update_llm_desc()
+
+    # Patterns die fuer Chat-Postprocess unbrauchbar sind:
+    # - embeddings (kein chat endpoint)
+    # - code-specialists (schwach bei normaler Sprache)
+    # - :cloud-tier (kostet Ollama-Cloud-Credits)
+    # - sorc-claude-reasoning (content bleibt leer, output liegt in 'reasoning')
+    _OLLAMA_SKIP = ("embed", "coder", ":cloud", "sorc/qwen3.5-claude-4.6-opus")
 
     def _fetch_ollama_models(self) -> list[str]:
         import requests
         try:
             r = requests.get("http://127.0.0.1:11434/api/tags", timeout=1.5)
             r.raise_for_status()
-            return [m["name"] for m in r.json().get("models", [])]
+            names = [m["name"] for m in r.json().get("models", [])]
         except Exception:
             return []
+        return [n for n in names if not any(s in n for s in self._OLLAMA_SKIP)]
 
     def _refresh_backend_buttons(self) -> None:
         if not self._backend_var or not self._backend_btns:

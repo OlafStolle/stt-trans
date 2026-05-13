@@ -35,7 +35,7 @@ class BlitztextConfig(BaseModel):
     input_device: str = ""
     audio_device: str = "default"
     transcribe_backend: Literal["online", "local"] = "online"
-    local_whisper_model: Literal["tiny", "base", "small", "medium"] = "small"
+    local_whisper_model: Literal["tiny", "base", "small", "medium", "large-v3"] = "small"
     modes: dict[str, ModeConfig] = Field(default_factory=lambda: {
         "normal": ModeConfig(key_code=183, key_name="KEY_F13"),
         "plus":   ModeConfig(key_code=184, key_name="KEY_F14",
