@@ -1,7 +1,9 @@
 # app/daemon.py
 """evdev-Daemon: überwacht Tasten global und startet die Transkriptions-Pipeline."""
 import asyncio
+import glob
 import logging
+import os
 import subprocess
 import evdev
 from app.config import BlitztextConfig, load_config
@@ -109,12 +111,18 @@ class BlitztextDaemon:
                 return
 
             mode_cfg = self.cfg.modes[mode_name]
-            text = await process_text(
-                text,
-                ProcessMode(mode_name),
-                prompt=mode_cfg.prompt,
-                emoji_count=mode_cfg.emoji_count,
-            )
+            try:
+                text = await process_text(
+                    text,
+                    ProcessMode(mode_name),
+                    prompt=mode_cfg.prompt,
+                    emoji_count=mode_cfg.emoji_count,
+                )
+            except Exception as llm_err:
+                logger.error("LLM post-process failed (%s) — Roh-Transkript in Clipboard", llm_err)
+                _copy_to_clipboard(text)
+                notify("error", f"LLM-Fehler — Roh-Text in Zwischenablage ({len(text)} Zeichen)")
+                return
             # Clipboard nur setzen wenn die inject-Methode das nicht selbst tut,
             # sonst blockieren sich die beiden wl-copy/xclip Daemons gegenseitig.
             if self.cfg.inject.method not in ("wl-copy+paste", "xclip+paste"):
@@ -126,137 +134,181 @@ class BlitztextDaemon:
             logger.error("Pipeline error: %s", e)
             notify("error", f"Fehler: {e}")
 
-    async def run(self) -> None:
-        """Hauptschleife: öffnet evdev-Device und wartet auf Tasten."""
-        self._running = True
-        device_path = self.cfg.input_device
-        if not device_path:
-            logger.warning("Kein input_device konfiguriert — Daemon inaktiv.")
+    def _handle_event(self, event) -> None:
+        """Verarbeitet ein einzelnes evdev-Event (geräte-agnostisch)."""
+        if event.type != evdev.ecodes.EV_KEY:
             return
 
-        try:
-            dev = evdev.InputDevice(device_path)
-            logger.info("stt-trans Daemon gestartet auf %s", device_path)
-            notify("done", "stt-trans bereit")
-        except Exception as e:
-            logger.error("Kann Device nicht öffnen: %s", e)
-            return
+        # Pressed-Keys-Set aktualisieren
+        import time as _time
 
+        # Discard stale UP/REPEAT events buffered before daemon started
+        if self._startup_flush:
+            if event.value == 1:
+                self._startup_flush = False  # first real DOWN → flush done
+            else:
+                return  # skip UP/REPEAT until first DOWN seen
+
+        _val_str = {0: "UP", 1: "DOWN", 2: "REPEAT"}.get(event.value, str(event.value))
+        logger.debug("KEY %s code=%d pressed=%s", _val_str, event.code, self._pressed_keys)
+        if event.value == 1:
+            self._pressed_keys.add(event.code)
+            self._key_down_time = _time.monotonic()
+        elif event.value == 0:
+            _held = _time.monotonic() - self._key_down_time
+            logger.info("KEY_UP code=%d held=%.3fs", event.code, _held)
+            self._pressed_keys.discard(event.code)
+
+        audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else "pulse"
+
+        if event.value == 1:
+            # Live-Key prüfen
+            live_combo = set(self.cfg.live_key_codes)
+            if live_combo and live_combo <= self._pressed_keys:
+                asyncio.create_task(self._toggle_live())
+                return
+
+            # Aufbauende Live-Combo: PTT unterdrücken solange gedrückte Keys
+            # noch eine Teilmenge der Live-Combo sein könnten
+            if live_combo and self._pressed_keys <= live_combo:
+                return
+
+            # PTT während Live ignorieren
+            if self._live_mic_session is not None:
+                return
+
+            # Key gedrückt — prüfe ob Combo komplett
+            mode_name = self._key_to_mode_combo()
+            if mode_name is None:
+                return
+            trigger = self.cfg.trigger_mode
+
+            if trigger == "hold" and self._active_mode is None:
+                try:
+                    self._session = RecordingSession(device=audio_device)
+                    self._session.start()
+                    self._active_mode = mode_name
+                    notify("recording", f"Aufnahme ({mode_name})...")
+                    logger.info("Recording started (hold): %s", mode_name)
+                except Exception as rec_err:
+                    logger.error("Recording start failed: %s", rec_err)
+                    notify("error", f"Mikrofon nicht gefunden: {audio_device}")
+                    self._session = None
+                    self._active_mode = None
+
+            elif trigger == "toggle":
+                if not self._toggle_recording:
+                    try:
+                        self._session = RecordingSession(device=audio_device)
+                        self._session.start()
+                        self._toggle_recording = True
+                        self._active_mode = mode_name
+                        notify("recording", f"Aufnahme ({mode_name})...")
+                    except Exception as rec_err:
+                        logger.error("Recording start failed: %s", rec_err)
+                        notify("error", f"Mikrofon nicht gefunden: {audio_device}")
+                        self._session = None
+                        self._active_mode = None
+                    logger.info("Recording started (toggle): %s", mode_name)
+                else:
+                    self._toggle_recording = False
+                    if self._session and self._active_mode:
+                        wav = self._session.stop()
+                        mode = self._active_mode
+                        self._session = None
+                        self._active_mode = None
+                        asyncio.create_task(self._run_pipeline(mode, wav))
+
+        elif event.value == 0:
+            # Key losgelassen — bei hold: Recording stoppen wenn aktiv
+            if self._session and self._active_mode:
+                mode_cfg = self.cfg.modes.get(self._active_mode)
+                if mode_cfg and self.cfg.trigger_mode == "hold":
+                    combo = set(mode_cfg.effective_key_codes)
+                    if event.code in combo:  # Einer der Combo-Keys losgelassen
+                        held_s = _time.monotonic() - self._key_down_time
+                        if held_s < 0.4 and not self._wait_for_next_up:
+                            # Kurzer Tap (<400ms): in Toggle-Modus wechseln
+                            self._wait_for_next_up = True
+                            logger.info("Kurzer Tap (%.3fs) — warte auf nächsten UP zum Stoppen", held_s)
+                        else:
+                            # Langer Hold oder zweiter UP → Aufnahme stoppen
+                            self._wait_for_next_up = False
+                            wav = self._session.stop()
+                            mode = self._active_mode
+                            self._session = None
+                            self._active_mode = None
+                            asyncio.create_task(self._run_pipeline(mode, wav))
+
+    def _open_key_devices(self) -> list[evdev.InputDevice]:
+        """Öffnet alle /dev/input/event* mit EV_KEY-Capability — silent skip bei Fehlern."""
+        devices: list[evdev.InputDevice] = []
+        for path in sorted(glob.glob("/dev/input/event*")):
+            try:
+                dev = evdev.InputDevice(path)
+                caps = dev.capabilities()
+                if evdev.ecodes.EV_KEY in caps:
+                    devices.append(dev)
+                else:
+                    dev.close()
+            except Exception:
+                # Permission denied, bereits geschlossen, etc. — silent skip
+                pass
+        return devices
+
+    async def _read_device_loop(self, dev: evdev.InputDevice) -> None:
+        """Liest Events von einem einzelnen Device und feedet sie in _handle_event."""
         try:
             async for event in dev.async_read_loop():
                 if not self._running:
                     break
-                if event.type != evdev.ecodes.EV_KEY:
-                    continue
-
-                # Pressed-Keys-Set aktualisieren
-                import time as _time
-
-                # Discard stale UP/REPEAT events buffered before daemon started
-                if self._startup_flush:
-                    if event.value == 1:
-                        self._startup_flush = False  # first real DOWN → flush done
-                    else:
-                        continue  # skip UP/REPEAT until first DOWN seen
-
-                _val_str = {0: "UP", 1: "DOWN", 2: "REPEAT"}.get(event.value, str(event.value))
-                logger.debug("KEY %s code=%d pressed=%s", _val_str, event.code, self._pressed_keys)
-                if event.value == 1:
-                    self._pressed_keys.add(event.code)
-                    self._key_down_time = _time.monotonic()
-                elif event.value == 0:
-                    _held = _time.monotonic() - self._key_down_time
-                    logger.info("KEY_UP code=%d held=%.3fs", event.code, _held)
-                    self._pressed_keys.discard(event.code)
-
-                audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else "pulse"
-
-                if event.value == 1:
-                    # Live-Key prüfen
-                    live_combo = set(self.cfg.live_key_codes)
-                    if live_combo and live_combo <= self._pressed_keys:
-                        asyncio.create_task(self._toggle_live())
-                        continue
-
-                    # Aufbauende Live-Combo: PTT unterdrücken solange gedrückte Keys
-                    # noch eine Teilmenge der Live-Combo sein könnten
-                    if live_combo and self._pressed_keys <= live_combo:
-                        continue
-
-                    # PTT während Live ignorieren
-                    if self._live_mic_session is not None:
-                        continue
-
-                    # Key gedrückt — prüfe ob Combo komplett
-                    mode_name = self._key_to_mode_combo()
-                    if mode_name is None:
-                        continue
-                    trigger = self.cfg.trigger_mode
-
-                    if trigger == "hold" and self._active_mode is None:
-                        try:
-                            self._session = RecordingSession(device=audio_device)
-                            self._session.start()
-                            self._active_mode = mode_name
-                            notify("recording", f"Aufnahme ({mode_name})...")
-                            logger.info("Recording started (hold): %s", mode_name)
-                        except Exception as rec_err:
-                            logger.error("Recording start failed: %s", rec_err)
-                            notify("error", f"Mikrofon nicht gefunden: {audio_device}")
-                            self._session = None
-                            self._active_mode = None
-
-                    elif trigger == "toggle":
-                        if not self._toggle_recording:
-                            try:
-                                self._session = RecordingSession(device=audio_device)
-                                self._session.start()
-                                self._toggle_recording = True
-                                self._active_mode = mode_name
-                                notify("recording", f"Aufnahme ({mode_name})...")
-                            except Exception as rec_err:
-                                logger.error("Recording start failed: %s", rec_err)
-                                notify("error", f"Mikrofon nicht gefunden: {audio_device}")
-                                self._session = None
-                                self._active_mode = None
-                            logger.info("Recording started (toggle): %s", mode_name)
-                        else:
-                            self._toggle_recording = False
-                            if self._session and self._active_mode:
-                                wav = self._session.stop()
-                                mode = self._active_mode
-                                self._session = None
-                                self._active_mode = None
-                                asyncio.create_task(self._run_pipeline(mode, wav))
-
-                elif event.value == 0:
-                    # Key losgelassen — bei hold: Recording stoppen wenn aktiv
-                    if self._session and self._active_mode:
-                        mode_cfg = self.cfg.modes.get(self._active_mode)
-                        if mode_cfg and self.cfg.trigger_mode == "hold":
-                            combo = set(mode_cfg.effective_key_codes)
-                            if event.code in combo:  # Einer der Combo-Keys losgelassen
-                                held_s = _time.monotonic() - self._key_down_time
-                                if held_s < 0.4 and not self._wait_for_next_up:
-                                    # Kurzer Tap (<400ms): in Toggle-Modus wechseln
-                                    self._wait_for_next_up = True
-                                    logger.info("Kurzer Tap (%.3fs) — warte auf nächsten UP zum Stoppen", held_s)
-                                else:
-                                    # Langer Hold oder zweiter UP → Aufnahme stoppen
-                                    self._wait_for_next_up = False
-                                    wav = self._session.stop()
-                                    mode = self._active_mode
-                                    self._session = None
-                                    self._active_mode = None
-                                    asyncio.create_task(self._run_pipeline(mode, wav))
-
+                self._handle_event(event)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.error("Daemon loop error: %s", e)
+            logger.error("Device loop error (%s): %s", getattr(dev, "path", "?"), e)
+
+    async def run(self) -> None:
+        """Hauptschleife: öffnet alle Keyboard-Devices und lauscht parallel."""
+        self._running = True
+
+        devices = self._open_key_devices()
+        if not devices:
+            logger.warning("Keine Input-Devices mit EV_KEY gefunden — Daemon inaktiv.")
+            return
+
+        # Config-Hinweis: primary device ist nur informativ, nicht mehr einschränkend
+        primary = self.cfg.input_device
+        if primary:
+            if any(d.path == primary for d in devices):
+                logger.info("primary device: %s (plus %d weitere)", primary, len(devices) - 1)
+            else:
+                logger.info("primary device %s nicht verfügbar — lausche auf %d Devices", primary, len(devices))
+        else:
+            logger.info("stt-trans Daemon lauscht auf %d Input-Devices", len(devices))
+
+        for d in devices:
+            logger.debug("  listening: %s (%s)", d.path, d.name)
+
+        notify("done", "stt-trans bereit")
+
+        tasks = [asyncio.create_task(self._read_device_loop(d)) for d in devices]
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            pass
         finally:
-            try:
-                dev.close()
-            except Exception:
-                pass
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            # Warten bis alle Tasks wirklich beendet sind, damit Devices
+            # nicht geschlossen werden während async_read_loop noch liest.
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for d in devices:
+                try:
+                    d.close()
+                except Exception:
+                    pass
 
     def _on_live_stopped(self) -> None:
         """Browser hat Live gestoppt — Daemon-State synchronisieren."""

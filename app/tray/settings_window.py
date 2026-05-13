@@ -22,11 +22,13 @@ GREEN = "#22c55e"
 FONT  = "DejaVu Sans"
 
 MODES = [
-    ("normal", "stt-trans"),
-    ("plus",   "stt-trans+"),
-    ("rage",   "stt-trans $%&!"),
-    ("emoji",  "stt-trans 😊"),
-    ("prompt", "stt-prompt"),
+    ("normal",        "stt-trans"),
+    ("plus",          "stt-trans+"),
+    ("rage",          "stt-trans $%&!"),
+    ("emoji",         "stt-trans 😊"),
+    ("translate_en",  "stt-trans → EN"),
+    ("translate_ceb", "stt-trans → CEB"),
+    ("prompt",        "stt-prompt"),
 ]
 
 
@@ -96,6 +98,11 @@ class SettingsWindow:
         self._backend_btns: dict[str, tk.Button] = {}
         self._model_combo: ttk.Combobox | None = None
         self._backend_warn_lbl: tk.Label | None = None
+        # LLM provider toggle
+        self._llm_provider_var: tk.StringVar | None = None
+        self._llm_model_var: tk.StringVar | None = None
+        self._llm_provider_btns: dict[str, tk.Button] = {}
+        self._llm_model_combo: ttk.Combobox | None = None
 
     def show(self) -> None:
         if self._win and self._win.winfo_exists():
@@ -107,7 +114,7 @@ class SettingsWindow:
         win = tk.Tk()
         self._win = win
         win.title("stt-trans Einstellungen")
-        win.geometry("620x610")
+        win.geometry("620x770")
         win.configure(bg=BG)
         win.resizable(False, False)
         win.protocol("WM_DELETE_WINDOW", self._close)
@@ -296,6 +303,50 @@ class SettingsWindow:
         # Apply initial visual state
         self._refresh_backend_buttons()
 
+        # ── LLM-Provider (OpenAI vs. Ollama) ─────────────────────────────
+        tk.Label(frame, text="LLM-PROVIDER (plus / rage / emoji / translate)",
+                 bg=BG, fg=MUTED, font=(FONT, 9)).pack(anchor="w", padx=16, pady=(16, 4))
+
+        row_llm = tk.Frame(frame, bg=CARD)
+        row_llm.pack(fill="x", padx=16, pady=2)
+
+        # Migration: alte Configs ohne llm_provider — aus llm_base_url ableiten
+        llm_provider = cfg.get("llm_provider", "")
+        if not llm_provider:
+            llm_provider = "ollama" if cfg.get("llm_base_url", "").strip() else "openai"
+        self._llm_provider_var = tk.StringVar(value=llm_provider)
+
+        btn_openai = tk.Button(
+            row_llm, text="OpenAI",
+            command=lambda: self._set_llm_provider("openai"),
+            relief="flat", bd=0, padx=12, pady=4, font=(FONT, 9),
+        )
+        btn_ollama = tk.Button(
+            row_llm, text="Ollama",
+            command=lambda: self._set_llm_provider("ollama"),
+            relief="flat", bd=0, padx=12, pady=4, font=(FONT, 9),
+        )
+        btn_claude = tk.Button(
+            row_llm, text="Claude CLI",
+            command=lambda: self._set_llm_provider("claude_cli"),
+            relief="flat", bd=0, padx=12, pady=4, font=(FONT, 9),
+        )
+        btn_openai.pack(side="left", padx=(8, 1), pady=6)
+        btn_ollama.pack(side="left", padx=1)
+        btn_claude.pack(side="left", padx=1)
+        self._llm_provider_btns = {
+            "openai": btn_openai, "ollama": btn_ollama, "claude_cli": btn_claude,
+        }
+
+        self._llm_model_var = tk.StringVar(value=cfg.get("llm_model", "gpt-4o-mini"))
+        self._llm_model_combo = ttk.Combobox(
+            row_llm, textvariable=self._llm_model_var,
+            values=[], state="readonly", width=28, font=(FONT, 9),
+        )
+        self._llm_model_combo.pack(side="left", padx=10)
+
+        self._refresh_llm_provider_buttons()
+
         # ── Mikrofon-Auswahl ─────────────────────────────────────────────
         tk.Label(frame, text="MIKROFON", bg=BG, fg=MUTED,
                  font=(FONT, 9)).pack(anchor="w", padx=16, pady=(16, 4))
@@ -348,6 +399,45 @@ class SettingsWindow:
         if self._backend_var:
             self._backend_var.set(backend)
         self._refresh_backend_buttons()
+
+    _OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo"]
+    _OLLAMA_FALLBACK = ["gemma4:latest", "qwen3.5:latest", "qwen2.5:3b"]
+    _CLAUDE_MODELS = ["haiku", "sonnet", "opus"]
+
+    def _set_llm_provider(self, provider: str) -> None:
+        if self._llm_provider_var:
+            self._llm_provider_var.set(provider)
+        self._refresh_llm_provider_buttons()
+
+    def _refresh_llm_provider_buttons(self) -> None:
+        if not self._llm_provider_var or not self._llm_provider_btns:
+            return
+        selected = self._llm_provider_var.get()
+        for name, btn in self._llm_provider_btns.items():
+            active = (name == selected)
+            btn.configure(bg=BLUE if active else CARD,
+                          fg="white" if active else MUTED)
+        if not self._llm_model_combo:
+            return
+        if selected == "openai":
+            models = self._OPENAI_MODELS
+        elif selected == "ollama":
+            models = self._fetch_ollama_models() or self._OLLAMA_FALLBACK
+        else:  # claude_cli
+            models = self._CLAUDE_MODELS
+        self._llm_model_combo.configure(values=models)
+        # Wenn aktueller Wert nicht in neuer Liste, ersten auswaehlen
+        if self._llm_model_var and self._llm_model_var.get() not in models:
+            self._llm_model_var.set(models[0])
+
+    def _fetch_ollama_models(self) -> list[str]:
+        import requests
+        try:
+            r = requests.get("http://127.0.0.1:11434/api/tags", timeout=1.5)
+            r.raise_for_status()
+            return [m["name"] for m in r.json().get("models", [])]
+        except Exception:
+            return []
 
     def _refresh_backend_buttons(self) -> None:
         if not self._backend_var or not self._backend_btns:
@@ -465,6 +555,16 @@ class SettingsWindow:
             updates["transcribe_backend"] = self._backend_var.get()
         if self._model_var:
             updates["local_whisper_model"] = self._model_var.get()
+
+        # LLM provider
+        if self._llm_provider_var:
+            provider = self._llm_provider_var.get()
+            updates["llm_provider"] = provider
+            updates["llm_base_url"] = (
+                "http://127.0.0.1:11434/v1" if provider == "ollama" else ""
+            )
+        if self._llm_model_var:
+            updates["llm_model"] = self._llm_model_var.get()
 
         try:
             self.client.patch_config(updates)

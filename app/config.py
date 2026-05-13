@@ -27,6 +27,8 @@ class InjectConfig(BaseModel):
 
 class BlitztextConfig(BaseModel):
     openai_api_key: str = ""
+    llm_provider: Literal["openai", "ollama", "claude_cli"] = "openai"
+    llm_base_url: str = ""  # nur bei provider=ollama relevant; leer = http://127.0.0.1:11434/v1
     llm_model: str = "gpt-4o-mini"
     whisper_language: str = "de"
     trigger_mode: str = "hold"       # hold | toggle
@@ -45,6 +47,17 @@ class BlitztextConfig(BaseModel):
                              prompt="Wandle folgenden wütenden Text in eine freundliche, "
                                     "professionelle Formulierung um:"),
         "emoji":  ModeConfig(key_code=186, key_name="KEY_F16", emoji_count="mittel"),
+        "translate_en": ModeConfig(
+            key_code=0, key_name="",
+            prompt=("Uebersetze den folgenden Text wortgetreu ins Englische. "
+                    "Nur die Uebersetzung, keine Erklaerung, kein Praefix."),
+        ),
+        "translate_ceb": ModeConfig(
+            key_code=0, key_name="",
+            prompt=("Uebersetze den folgenden Text ins Cebuano (Bisaya, gesprochen "
+                    "in Negros Occidental). Nur die Uebersetzung, keine Erklaerung, "
+                    "kein Praefix."),
+        ),
         "prompt": ModeConfig(
             key_code=0, key_name="",
             prompt=(

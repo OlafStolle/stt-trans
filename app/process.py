@@ -1,28 +1,58 @@
 # app/process.py
 """LLM Post-Processing fuer Plus, Rage und Emoji-Modi."""
+import asyncio
+import logging
 from enum import Enum
 from openai import AsyncOpenAI
 from app.config import load_config
 
+logger = logging.getLogger("stt-trans.process")
+
 
 class ProcessMode(str, Enum):
-    NORMAL = "normal"
-    PLUS   = "plus"
-    RAGE   = "rage"
-    EMOJI  = "emoji"
-    PROMPT = "prompt"
+    NORMAL        = "normal"
+    PLUS          = "plus"
+    RAGE          = "rage"
+    EMOJI         = "emoji"
+    PROMPT        = "prompt"
+    TRANSLATE_EN  = "translate_en"
+    TRANSLATE_CEB = "translate_ceb"
 
 
 _client: AsyncOpenAI | None = None
 
 
 def get_client() -> AsyncOpenAI:
-    """Return a singleton AsyncOpenAI client, initialised from config."""
+    """Return a singleton AsyncOpenAI client, initialised from config.
+
+    Used for provider=openai and provider=ollama (both expose the same
+    chat-completions API). Not used for provider=claude_cli.
+    """
     global _client
     if _client is None:
         cfg = load_config()
-        _client = AsyncOpenAI(api_key=cfg.openai_api_key)
+        kwargs: dict = {"api_key": cfg.openai_api_key or "ollama"}
+        if cfg.llm_provider == "ollama":
+            kwargs["base_url"] = cfg.llm_base_url or "http://127.0.0.1:11434/v1"
+        elif cfg.llm_base_url:  # custom OpenAI-compatible endpoint
+            kwargs["base_url"] = cfg.llm_base_url
+        _client = AsyncOpenAI(**kwargs)
     return _client
+
+
+async def _call_claude_cli(system_prompt: str, text: str, model: str) -> str:
+    """Pipe text into the local Claude CLI (uses Max-Plan login, no API key)."""
+    proc = await asyncio.create_subprocess_exec(
+        "claude", "-p", "--model", model or "haiku",
+        "--output-format", "text", system_prompt,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate(input=text.encode())
+    if proc.returncode != 0:
+        raise RuntimeError(f"claude CLI failed (exit {proc.returncode}): {stderr.decode()[:200]}")
+    return stdout.decode().strip()
 
 
 _EMOJI_COUNT_MAP = {
@@ -56,12 +86,14 @@ async def process_text(
 
     # HARD GUARD: Ohne expliziten Prompt kein LLM-Call — sonst wuerde das
     # Modell die Transkription als Frage interpretieren und antworten.
-    if mode in (ProcessMode.PLUS, ProcessMode.RAGE, ProcessMode.PROMPT) and not (prompt and prompt.strip()):
+    if mode in (
+        ProcessMode.PLUS, ProcessMode.RAGE, ProcessMode.PROMPT,
+        ProcessMode.TRANSLATE_EN, ProcessMode.TRANSLATE_CEB,
+    ) and not (prompt and prompt.strip()):
         return text
 
     cfg = load_config()
     llm_model = model or cfg.llm_model
-    client = get_client()
 
     # Harte Rahmen-Anweisung, die in JEDEM umformulierenden System-Prompt
     # steckt: niemals antworten, niemals erklaeren, nur den Eingabetext
@@ -87,6 +119,10 @@ async def process_text(
     else:
         system_prompt = (prompt or "") + _GUARD
 
+    if cfg.llm_provider == "claude_cli":
+        return await _call_claude_cli(system_prompt, text, llm_model)
+
+    client = get_client()
     resp = await client.chat.completions.create(
         model=llm_model,
         messages=[
