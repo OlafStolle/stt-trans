@@ -27,7 +27,8 @@ class InjectConfig(BaseModel):
 
 class BlitztextConfig(BaseModel):
     openai_api_key: str = ""
-    llm_base_url: str = ""  # leer = OpenAI; sonst OpenAI-kompatibler Endpoint (z.B. Ollama)
+    llm_provider: Literal["openai", "ollama", "claude_cli"] = "openai"
+    llm_base_url: str = ""  # nur bei provider=ollama relevant; leer = http://127.0.0.1:11434/v1
     llm_model: str = "gpt-4o-mini"
     whisper_language: str = "de"
     trigger_mode: str = "hold"       # hold | toggle

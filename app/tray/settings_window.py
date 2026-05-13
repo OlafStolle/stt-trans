@@ -310,8 +310,10 @@ class SettingsWindow:
         row_llm = tk.Frame(frame, bg=CARD)
         row_llm.pack(fill="x", padx=16, pady=2)
 
-        # leerer base_url = OpenAI; sonst Ollama
-        llm_provider = "ollama" if cfg.get("llm_base_url", "").strip() else "openai"
+        # Migration: alte Configs ohne llm_provider — aus llm_base_url ableiten
+        llm_provider = cfg.get("llm_provider", "")
+        if not llm_provider:
+            llm_provider = "ollama" if cfg.get("llm_base_url", "").strip() else "openai"
         self._llm_provider_var = tk.StringVar(value=llm_provider)
 
         btn_openai = tk.Button(
@@ -320,13 +322,21 @@ class SettingsWindow:
             relief="flat", bd=0, padx=12, pady=4, font=(FONT, 9),
         )
         btn_ollama = tk.Button(
-            row_llm, text="Ollama (lokal)",
+            row_llm, text="Ollama",
             command=lambda: self._set_llm_provider("ollama"),
+            relief="flat", bd=0, padx=12, pady=4, font=(FONT, 9),
+        )
+        btn_claude = tk.Button(
+            row_llm, text="Claude CLI",
+            command=lambda: self._set_llm_provider("claude_cli"),
             relief="flat", bd=0, padx=12, pady=4, font=(FONT, 9),
         )
         btn_openai.pack(side="left", padx=(8, 1), pady=6)
         btn_ollama.pack(side="left", padx=1)
-        self._llm_provider_btns = {"openai": btn_openai, "ollama": btn_ollama}
+        btn_claude.pack(side="left", padx=1)
+        self._llm_provider_btns = {
+            "openai": btn_openai, "ollama": btn_ollama, "claude_cli": btn_claude,
+        }
 
         self._llm_model_var = tk.StringVar(value=cfg.get("llm_model", "gpt-4o-mini"))
         self._llm_model_combo = ttk.Combobox(
@@ -392,6 +402,7 @@ class SettingsWindow:
 
     _OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo"]
     _OLLAMA_FALLBACK = ["gemma4:latest", "qwen3.5:latest", "qwen2.5:3b"]
+    _CLAUDE_MODELS = ["haiku", "sonnet", "opus"]
 
     def _set_llm_provider(self, provider: str) -> None:
         if self._llm_provider_var:
@@ -401,19 +412,19 @@ class SettingsWindow:
     def _refresh_llm_provider_buttons(self) -> None:
         if not self._llm_provider_var or not self._llm_provider_btns:
             return
-        is_openai = self._llm_provider_var.get() == "openai"
-        self._llm_provider_btns["openai"].configure(
-            bg=BLUE if is_openai else CARD, fg="white" if is_openai else MUTED,
-        )
-        self._llm_provider_btns["ollama"].configure(
-            bg=BLUE if not is_openai else CARD, fg="white" if not is_openai else MUTED,
-        )
+        selected = self._llm_provider_var.get()
+        for name, btn in self._llm_provider_btns.items():
+            active = (name == selected)
+            btn.configure(bg=BLUE if active else CARD,
+                          fg="white" if active else MUTED)
         if not self._llm_model_combo:
             return
-        if is_openai:
+        if selected == "openai":
             models = self._OPENAI_MODELS
-        else:
+        elif selected == "ollama":
             models = self._fetch_ollama_models() or self._OLLAMA_FALLBACK
+        else:  # claude_cli
+            models = self._CLAUDE_MODELS
         self._llm_model_combo.configure(values=models)
         # Wenn aktueller Wert nicht in neuer Liste, ersten auswaehlen
         if self._llm_model_var and self._llm_model_var.get() not in models:
@@ -547,10 +558,10 @@ class SettingsWindow:
 
         # LLM provider
         if self._llm_provider_var:
+            provider = self._llm_provider_var.get()
+            updates["llm_provider"] = provider
             updates["llm_base_url"] = (
-                "http://127.0.0.1:11434/v1"
-                if self._llm_provider_var.get() == "ollama"
-                else ""
+                "http://127.0.0.1:11434/v1" if provider == "ollama" else ""
             )
         if self._llm_model_var:
             updates["llm_model"] = self._llm_model_var.get()
