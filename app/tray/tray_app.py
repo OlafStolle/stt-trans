@@ -59,7 +59,7 @@ class BlitztextTrayApp:
         t.start()
 
     def _poll_status(self) -> None:
-        """Pollt /api/status alle 3s und wechselt Icon."""
+        """Pollt /api/status alle 3s, wechselt Icon und aktualisiert Tooltip."""
         import time
         _idle_icon = create_tray_icon(64)
         _rec_icon = create_recording_icon(64)
@@ -69,15 +69,27 @@ class BlitztextTrayApp:
             time.sleep(3)
             if self._icon is None:
                 break
+            api_ok = True
+            is_rec = False
+            mode = None
             try:
                 status = self.client.get_status()
                 is_rec = status.get("recording", False)
+                mode = status.get("mode")
             except Exception:
-                is_rec = False
+                api_ok = False
 
             if is_rec != _was_recording:
                 _was_recording = is_rec
                 self._icon.icon = _rec_icon if is_rec else _idle_icon
+
+            if api_ok:
+                self._icon.title = (
+                    f"stt-trans | API ✓ | recording: {mode}"
+                    if is_rec else "stt-trans | API ✓ | idle"
+                )
+            else:
+                self._icon.title = "stt-trans | API ✗ offline"
 
     def _quit(self, icon=None, item=None) -> None:
         if self._icon:

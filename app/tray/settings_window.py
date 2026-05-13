@@ -114,10 +114,20 @@ class SettingsWindow:
         win = tk.Tk()
         self._win = win
         win.title("stt-trans Einstellungen")
-        win.geometry("620x770")
+        win.geometry("620x800")
         win.configure(bg=BG)
         win.resizable(False, False)
         win.protocol("WM_DELETE_WINDOW", self._close)
+
+        # ── Status-Header (Live API + Recording) ─────────────────────────
+        status_bar = tk.Frame(win, bg=CARD)
+        status_bar.pack(fill="x", padx=0, pady=(0, 4))
+        self._status_lbl = tk.Label(
+            status_bar, text="API: …", bg=CARD, fg=MUTED,
+            font=(FONT, 9), anchor="w", padx=12, pady=4,
+        )
+        self._status_lbl.pack(side="left", fill="x", expand=True)
+        self._poll_api_status()  # initial + repeat alle 3s
 
         style = ttk.Style(win)
         style.theme_use("clam")
@@ -702,6 +712,33 @@ class SettingsWindow:
             self._win = None
         if self.on_close:
             self.on_close()
+
+    def _poll_api_status(self) -> None:
+        """Aktualisiert Status-Header im UI-Thread, alle 3s."""
+        if not self._win or not getattr(self, "_status_lbl", None):
+            return
+        try:
+            health = self.client.get_health()
+            status = self.client.get_status()
+            cfg = self.client.get_config()
+            rec = status.get("recording", False)
+            mode = status.get("mode") or "—"
+            txt = (
+                f"API ✓ {health.get('status','?')}  •  "
+                f"Provider: {cfg.get('llm_provider','?')}  •  "
+                f"Modell: {cfg.get('llm_model','?')}  •  "
+                f"Whisper: {cfg.get('local_whisper_model','?')}  •  "
+                f"Recording: {'● ' + mode if rec else 'idle'}"
+            )
+            color = "#22c55e" if not rec else BLUE
+        except Exception as e:
+            txt = f"API ✗ offline ({type(e).__name__})"
+            color = "#ef4444"
+        try:
+            self._status_lbl.configure(text=txt, fg=color)
+        except Exception:
+            return
+        self._win.after(3000, self._poll_api_status)
 
 
 def _format_key_display(key_name: str, device_name: str) -> str:
