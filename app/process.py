@@ -6,11 +6,13 @@ from app.config import load_config
 
 
 class ProcessMode(str, Enum):
-    NORMAL = "normal"
-    PLUS   = "plus"
-    RAGE   = "rage"
-    EMOJI  = "emoji"
-    PROMPT = "prompt"
+    NORMAL        = "normal"
+    PLUS          = "plus"
+    RAGE          = "rage"
+    EMOJI         = "emoji"
+    PROMPT        = "prompt"
+    TRANSLATE_EN  = "translate_en"
+    TRANSLATE_CEB = "translate_ceb"
 
 
 _client: AsyncOpenAI | None = None
@@ -21,7 +23,10 @@ def get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
         cfg = load_config()
-        _client = AsyncOpenAI(api_key=cfg.openai_api_key)
+        kwargs: dict = {"api_key": cfg.openai_api_key or "ollama"}
+        if cfg.llm_base_url:
+            kwargs["base_url"] = cfg.llm_base_url
+        _client = AsyncOpenAI(**kwargs)
     return _client
 
 
@@ -56,7 +61,10 @@ async def process_text(
 
     # HARD GUARD: Ohne expliziten Prompt kein LLM-Call — sonst wuerde das
     # Modell die Transkription als Frage interpretieren und antworten.
-    if mode in (ProcessMode.PLUS, ProcessMode.RAGE, ProcessMode.PROMPT) and not (prompt and prompt.strip()):
+    if mode in (
+        ProcessMode.PLUS, ProcessMode.RAGE, ProcessMode.PROMPT,
+        ProcessMode.TRANSLATE_EN, ProcessMode.TRANSLATE_CEB,
+    ) and not (prompt and prompt.strip()):
         return text
 
     cfg = load_config()
