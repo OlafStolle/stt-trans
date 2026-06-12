@@ -10,6 +10,7 @@ if "PYSTRAY_BACKEND" not in os.environ:
         pass
 
 import pystray
+from app.inject import notify
 from app.tray.api_client import BlitztextClient
 from app.tray.icon import create_tray_icon, create_recording_icon
 from app.tray.settings_window import SettingsWindow
@@ -25,6 +26,8 @@ class BlitztextTrayApp:
         icon_image = create_tray_icon(64)
         menu = pystray.Menu(
             pystray.MenuItem("Einstellungen öffnen", self._open_settings, default=True),
+            pystray.MenuItem("Live-Modus starten", self._start_live),
+            pystray.MenuItem("Live-Modus stoppen", self._stop_live),
             pystray.MenuItem("Neustart", self._restart_daemon),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Beenden", self._quit),
@@ -33,14 +36,34 @@ class BlitztextTrayApp:
         threading.Thread(target=self._poll_status, daemon=True).start()
         self._icon.run()
 
+    def _start_live(self, icon=None, item=None) -> None:
+        try:
+            self.client.start_live()
+            notify("recording", "Live-Modus gestartet")
+        except Exception as e:
+            notify("error", f"Live-Start fehlgeschlagen: {e}")
+
+    def _stop_live(self, icon=None, item=None) -> None:
+        try:
+            self.client.stop_live()
+            notify("done", "Live-Modus gestoppt")
+        except Exception as e:
+            notify("error", f"Live-Stop fehlgeschlagen: {e}")
+
     def _restart_daemon(self, icon=None, item=None) -> None:
-        """Restart the stt-trans systemd user service."""
+        """Restart the stt-trans systemd user service (mit Feedback)."""
         import subprocess
-        subprocess.run(
-            ["systemctl", "--user", "restart", "stt-trans.service"],
-            capture_output=True,
-            timeout=15,
-        )
+        try:
+            r = subprocess.run(
+                ["systemctl", "--user", "restart", "stt-trans.service"],
+                capture_output=True, timeout=15, text=True,
+            )
+            if r.returncode == 0:
+                notify("done", "stt-trans neu gestartet")
+            else:
+                notify("error", f"Neustart fehlgeschlagen ({r.returncode})")
+        except Exception as e:
+            notify("error", f"Neustart-Fehler: {e}")
 
     def _open_settings(self, icon=None, item=None) -> None:
         # tkinter mainloop muss in eigenem Thread laufen (pystray blockiert main thread)

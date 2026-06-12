@@ -202,6 +202,17 @@ async def live_page() -> FileResponse:
     return FileResponse(_STATIC_DIR / "live.html")
 
 
+@router.post("/live/start")
+async def start_live_route() -> dict:
+    """Startet den Live-Modus (idempotent) — für Tray-/UI-Steuerung."""
+    from app.main import get_daemon
+    daemon = get_daemon()
+    if daemon is None:
+        return {"ok": False, "error": "Daemon nicht bereit"}
+    started = await daemon.start_live()
+    return {"ok": True, "started": started}
+
+
 @router.post("/live/stop")
 async def stop_live() -> dict:
     """Stoppt beide Live-Sessions vom Browser aus."""

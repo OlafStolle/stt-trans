@@ -54,49 +54,72 @@ class BlitztextDaemon:
                     best_has_key_name = True
         return best_mode
 
-    async def _toggle_live(self) -> None:
-        """Startet oder stoppt den Live-Transkriptions-Modus."""
-        if self._session is not None:
-            logger.warning("PTT läuft — Live-Modus nicht gestartet")
-            return
-
-        # Stop-Button im Browser könnte live._live_mic_session geleert haben
+    def _sync_live_state(self) -> None:
+        """Browser-Stop könnte live._live_mic_session geleert haben — Daemon nachziehen."""
         if self._live_mic_session is not None and live._live_mic_session is None:
             self._live_mic_session = None
             self._live_desktop_session = None
 
+    def _open_live_page(self) -> None:
+        try:
+            subprocess.Popen(
+                ["xdg-open", "http://localhost:8765/live"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            logger.warning("xdg-open nicht gefunden — öffne http://localhost:8765/live manuell")
+
+    async def _start_live(self) -> bool:
+        """Startet Live-Sessions, falls nicht bereits aktiv. True = neu gestartet."""
+        if self._session is not None:
+            logger.warning("PTT läuft — Live-Modus nicht gestartet")
+            return False
+        self._sync_live_state()
+        if self._live_mic_session is not None:
+            return False  # läuft bereits
+        loop = asyncio.get_running_loop()
+        monitor = find_monitor_device()
+        audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else "pulse"
+        mic = LiveRecordingSession(device=audio_device)
+        desktop = LiveRecordingSession(device=monitor) if monitor else None
+        mic.start(loop)
+        if desktop:
+            desktop.start(loop)
+        self._live_mic_session = mic
+        self._live_desktop_session = desktop
+        live.set_sessions(mic, desktop)
+        live.set_stop_callback(self._on_live_stopped)
+        asyncio.create_task(live.start_pumps())
+        notify("recording", "Live-Transkription gestartet")
+        self._open_live_page()
+        return True
+
+    async def _stop_live(self) -> None:
+        """Stoppt aktive Live-Sessions (idempotent)."""
+        self._sync_live_state()
         if self._live_mic_session is None:
-            loop = asyncio.get_running_loop()
-            monitor = find_monitor_device()
-            audio_device = self.cfg.audio_device if self.cfg.audio_device != "default" else "pulse"
-            mic = LiveRecordingSession(device=audio_device)
-            desktop = LiveRecordingSession(device=monitor) if monitor else None
-            mic.start(loop)
-            if desktop:
-                desktop.start(loop)
-            self._live_mic_session = mic
-            self._live_desktop_session = desktop
-            live.set_sessions(mic, desktop)
-            live.set_stop_callback(self._on_live_stopped)
-            asyncio.create_task(live.start_pumps())
-            notify("recording", "Live-Transkription gestartet")
-            try:
-                subprocess.Popen(
-                    ["xdg-open", "http://localhost:8765/live"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except FileNotFoundError:
-                logger.warning("xdg-open nicht gefunden — öffne http://localhost:8765/live manuell")
+            return
+        self._live_mic_session.stop()
+        self._live_mic_session = None
+        if self._live_desktop_session:
+            self._live_desktop_session.stop()
+            self._live_desktop_session = None
+        live.set_sessions(None, None)
+        live.set_stop_callback(None)
+        notify("done", "Live-Transkription beendet")
+
+    async def _toggle_live(self) -> None:
+        """Hotkey-Verhalten: startet oder stoppt den Live-Modus."""
+        self._sync_live_state()
+        if self._live_mic_session is None:
+            await self._start_live()
         else:
-            self._live_mic_session.stop()
-            self._live_mic_session = None
-            if self._live_desktop_session:
-                self._live_desktop_session.stop()
-                self._live_desktop_session = None
-            live.set_sessions(None, None)
-            live.set_stop_callback(None)
-            notify("done", "Live-Transkription beendet")
+            await self._stop_live()
+
+    async def start_live(self) -> bool:
+        """Öffentlicher Einstieg für die HTTP-/Tray-Steuerung (idempotenter Start)."""
+        return await self._start_live()
 
     async def _run_pipeline(self, mode_name: str, wav_bytes: bytes) -> None:
         """Whisper → LLM → inject."""

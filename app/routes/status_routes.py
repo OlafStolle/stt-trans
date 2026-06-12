@@ -13,4 +13,5 @@ def get_status():
     return {
         "recording": daemon._active_mode is not None,
         "mode": daemon._active_mode,
+        "live": daemon._live_mic_session is not None,
     }

@@ -40,19 +40,38 @@ def get_client() -> AsyncOpenAI:
     return _client
 
 
+def _strip_meta_lines(text: str) -> str:
+    """Entfernt 🔊-TTS-Zeilen, falls die CLI doch Begleittext erzeugt (Defense-in-Depth)."""
+    lines = [ln for ln in text.splitlines() if not ln.lstrip().startswith("🔊")]
+    return "\n".join(lines).strip()
+
+
 async def _call_claude_cli(system_prompt: str, text: str, model: str) -> str:
-    """Pipe text into the local Claude CLI (uses Max-Plan login, no API key)."""
-    proc = await asyncio.create_subprocess_exec(
-        "claude", "-p", "--model", model or "haiku",
-        "--output-format", "text", system_prompt,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate(input=text.encode())
+    """Pipe text into the local Claude CLI (uses Max-Plan login, no API key).
+
+    --setting-sources "" verhindert das Laden von ~/.claude/CLAUDE.md, Hooks,
+    Auto-Memory und Projekt-Settings — sonst erbt der Cleanup-Aufruf die
+    persoenliche Agent-Persoenlichkeit (z.B. supertonic-🔊-Zeile, Meta-Kommentare).
+    Die Anweisung gehoert in --system-prompt, der Transkript-Text ist der User-Prompt.
+    cwd ist ein neutrales Temp-Verzeichnis (keine projekt-lokale CLAUDE.md).
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="blitztext-claude-") as tmpdir:
+        proc = await asyncio.create_subprocess_exec(
+            "claude", "-p", text,
+            "--model", model or "haiku",
+            "--system-prompt", system_prompt,
+            "--setting-sources", "",
+            "--output-format", "text",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=tmpdir,
+        )
+        stdout, stderr = await proc.communicate()
     if proc.returncode != 0:
         raise RuntimeError(f"claude CLI failed (exit {proc.returncode}): {stderr.decode()[:200]}")
-    return stdout.decode().strip()
+    return _strip_meta_lines(stdout.decode())
 
 
 _EMOJI_COUNT_MAP = {

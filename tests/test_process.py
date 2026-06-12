@@ -1,7 +1,7 @@
 # tests/test_process.py
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from app.process import process_text, ProcessMode
+from app.process import process_text, ProcessMode, _strip_meta_lines, _call_claude_cli
 
 @pytest.mark.asyncio
 async def test_process_plus():
@@ -41,3 +41,34 @@ async def test_process_normal_passthrough():
     """Normal mode: kein LLM, Text unveraendert zurueck."""
     result = await process_text("Hallo Welt", ProcessMode.NORMAL)
     assert result == "Hallo Welt"
+
+
+def test_strip_meta_lines():
+    """🔊-TTS-Zeilen werden entfernt, normaler Text bleibt erhalten."""
+    text = "Sauberer Text\n🔊 Das hier ist eine Sprachausgabe-Zeile"
+    assert _strip_meta_lines(text) == "Sauberer Text"
+    # Reiner Text bleibt unveraendert (nur getrimmt)
+    assert _strip_meta_lines("  Nur Text  ") == "Nur Text"
+
+
+@pytest.mark.asyncio
+async def test_call_claude_cli_uses_system_prompt_and_isolated_settings():
+    """CLI-Aufruf nutzt --system-prompt + isolierte Settings, strippt Meta-Zeilen."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"sauberer text", b""))
+
+    with patch(
+        "asyncio.create_subprocess_exec",
+        new=AsyncMock(return_value=mock_proc),
+    ) as mock_exec:
+        result = await _call_claude_cli("SYSPROMPT", "roher text", "sonnet")
+
+    assert result == "sauberer text"
+    args = mock_exec.call_args.args
+    assert "--system-prompt" in args
+    assert "SYSPROMPT" in args
+    assert "--setting-sources" in args
+    assert "" in args
+    assert "roher text" in args
+    assert "-p" in args

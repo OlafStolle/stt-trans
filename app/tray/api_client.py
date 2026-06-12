@@ -33,6 +33,16 @@ class BlitztextClient:
         r.raise_for_status()
         return r.json()
 
+    def start_live(self) -> dict[str, Any]:
+        r = requests.post(f"{self.base}/live/start", timeout=5)
+        r.raise_for_status()
+        return r.json()
+
+    def stop_live(self) -> dict[str, Any]:
+        r = requests.post(f"{self.base}/live/stop", timeout=5)
+        r.raise_for_status()
+        return r.json()
+
     def list_input_devices(self) -> list[tuple[str, str]]:
         """Returns list of (path, name) tuples for all evdev devices."""
         devices: list[tuple[str, str]] = []

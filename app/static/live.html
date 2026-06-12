@@ -61,6 +61,11 @@
            font-size:12px;font-weight:600;background:#ef4444;color:#fff;">
     ⏹ Stop
   </button>
+  <button id="reconnect-btn" onclick="reconnectNow()"
+    style="padding:5px 14px;border-radius:6px;border:none;cursor:pointer;
+           font-size:12px;font-weight:600;background:#3b82f6;color:#fff;">
+    🔄 Neu verbinden
+  </button>
   <span id="clock"></span>
 </div>
 
@@ -102,7 +107,8 @@ const WS_BASE = `ws://${location.host}`;
 let micWs = null, desktopWs = null;
 let micMuted = false;
 let firstMicChunk = true, firstDesktopChunk = true;
-let stopped = false;
+let pageClosing = false;
+window.addEventListener('beforeunload', () => { pageClosing = true; });
 
 // Clock
 setInterval(() => {
@@ -124,11 +130,18 @@ function setLang(stream, lang) {
 }
 
 function stopLive() {
-  stopped = true;
+  // Stoppt nur die Backend-Session; die Seite bleibt offen und wartet
+  // auf eine neue Session (Reconnect-Loop läuft weiter).
+  fetch('/live/stop', { method: 'POST' }).catch(() => {});
   if (micWs) micWs.close();
   if (desktopWs) desktopWs.close();
-  fetch('/live/stop', { method: 'POST' });
-  updateStatus(false);
+}
+
+function reconnectNow() {
+  if (micWs) { try { micWs.close(); } catch (e) {} }
+  if (desktopWs) { try { desktopWs.close(); } catch (e) {} }
+  connectWs('mic');
+  connectWs('desktop');
 }
 
 function toggleMic() {
@@ -173,7 +186,7 @@ function updateStatus(connected) {
     text.textContent = '🔴 Live';
   } else {
     dot.className = '';
-    text.textContent = 'Verbindung getrennt…';
+    text.textContent = '⏳ Warte auf Live-Session…';
   }
 }
 
@@ -194,7 +207,7 @@ function connectWs(stream) {
 
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
-    if (data.done) { stopped = true; return; }
+    if (data.done) return;
     if (data.error) return;  // no session yet — onclose handles retry
     if (!data.text) return;
     appendChunk(`${stream}-transcript`, data);
@@ -203,7 +216,7 @@ function connectWs(stream) {
   ws.onclose = () => {
     dot.className = 'ws-dot';
     updateStatus(false);
-    if (!stopped) setTimeout(() => connectWs(stream), 3000);
+    if (!pageClosing) setTimeout(() => connectWs(stream), 3000);
   };
 
   ws.onerror = () => ws.close();
