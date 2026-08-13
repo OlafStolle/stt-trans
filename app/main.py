@@ -64,6 +64,11 @@ def create_app() -> FastAPI:
     app.include_router(process_router)
     app.include_router(status_router)
     app.include_router(live_router)
+    # Mermaid liegt lokal bei — die Workshop-Ansicht laedt nichts aus dem Netz.
+    from pathlib import Path
+    from fastapi.staticfiles import StaticFiles
+    static_dir = Path(__file__).parent / "static"
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     return app
 
 

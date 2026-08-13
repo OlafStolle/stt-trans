@@ -34,6 +34,9 @@ def patch_config(updates: dict = Body(...)):
 
     new_cfg = BlitztextConfig.model_validate(updated)
     save_config(new_cfg)
+    # Live-Modus cached die Config — sonst greifen Tray-Aenderungen erst nach Neustart.
+    from app.routes.live import invalidate_config_cache
+    invalidate_config_cache()
     data = new_cfg.model_dump()
     key = data.get("openai_api_key", "")
     data["openai_api_key"] = f"...{key[-4:]}" if len(key) > 4 else ("***" if key else "")

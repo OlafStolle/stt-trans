@@ -115,6 +115,26 @@ class BlitztextTrayApp:
                 self._icon.title = "stt-trans | API ✗ offline"
 
     def _quit(self, icon=None, item=None) -> None:
+        # Erst den Diktatdienst stoppen – sonst tippt er nach dem Schliessen
+        # des Tray-Symbols weiter Text ein (er laeuft als eigener systemd-Dienst).
+        import subprocess
+        try:
+            subprocess.run(
+                ["systemctl", "--user", "stop", "stt-trans.service"],
+                capture_output=True, timeout=15, text=True,
+            )
+        except Exception:
+            pass
+        # Diese Tray-Instanz gewollt beenden. "stop" (kein Crash) neutralisiert
+        # Restart=on-failure, damit das Symbol nicht sofort neu gestartet wird.
+        # --no-block verhindert, dass wir uns selbst blockieren, waehrend systemd
+        # uns per SIGTERM beendet.
+        try:
+            subprocess.Popen(
+                ["systemctl", "--user", "--no-block", "stop", "stt-trans-tray.service"]
+            )
+        except Exception:
+            pass
         if self._icon:
             self._icon.stop()
 

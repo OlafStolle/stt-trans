@@ -36,6 +36,23 @@
                text-transform: uppercase; letter-spacing: .08em; flex: 1; }
   .col-header select { background: #2a2a35; color: #e0e0e0; border: 1px solid #3a3a45;
                        border-radius: 4px; padding: 3px 6px; font-size: 11px; cursor: pointer; }
+  .lang-label { font-size: 10px; color: #6b7280; white-space: nowrap; }
+
+  /* Workshop-Assistent */
+  #workshop-panel { display: none; padding: 6px 16px; background: #0c1a22;
+                    border-bottom: 1px solid #143a4a; flex-shrink: 0; font-size: 11px; }
+  #workshop-panel.open { display: block; }
+  .wp-status { color: #7dd3fc; }
+  .wp-warn { color: #fbbf24; }
+  .wp-err { color: #f87171; }
+  #screen-opt { font-size: 11px; color: #9ca3af; display: flex; align-items: center;
+                gap: 4px; cursor: pointer; user-select: none; }
+  #screen-opt input { cursor: pointer; margin: 0; }
+  .wp-tags { margin-top: 4px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .wp-tag { background: #143a4a; color: #7dd3fc; border-radius: 3px;
+            padding: 1px 6px; font-size: 10px; letter-spacing: .04em; }
+  .wp-tags a { color: #38bdf8; text-decoration: none; font-weight: 600; }
+  .wp-tags a:hover { text-decoration: underline; }
   .ws-dot { width: 7px; height: 7px; border-radius: 50%; background: #888; flex-shrink: 0; }
   .ws-dot.connected { background: #22c55e; }
 
@@ -48,6 +65,27 @@
   .chunk-translation { font-size: 12px; color: #88cc88; margin-top: 2px; padding-left: 8px;
                        border-left: 2px solid #2a4a2a; }
   .no-signal { font-size: 12px; color: #444; padding: 20px; text-align: center; }
+  .chunk.restored { opacity: .75; }
+
+  /* Speicher-Hinweis + Archiv */
+  #saveinfo { padding: 5px 16px; font-size: 11px; color: #6b7280; background: #131318;
+              border-bottom: 1px solid #2a2a35; flex-shrink: 0; }
+  #saveinfo.saved { color: #22c55e; }
+  #archive { display: none; max-height: 40vh; overflow-y: auto; background: #131318;
+             border-bottom: 1px solid #2a2a35; padding: 8px 16px; flex-shrink: 0; }
+  #archive.open { display: block; }
+  #archive h4 { font-size: 11px; color: #a0a0b0; text-transform: uppercase;
+                letter-spacing: .08em; margin-bottom: 6px; font-weight: 700; }
+  #archive .path { font-size: 10px; color: #555; margin-bottom: 8px; word-break: break-all; }
+  .arc-row { display: flex; align-items: center; gap: 10px; padding: 5px 0;
+             border-bottom: 1px solid #1f1f27; font-size: 12px; }
+  .arc-row:last-child { border-bottom: none; }
+  .arc-when { color: #a0a0b0; white-space: nowrap; font-weight: 600; }
+  .arc-count { color: #555; white-space: nowrap; font-size: 11px; }
+  .arc-prev { color: #6b7280; overflow: hidden; text-overflow: ellipsis;
+              white-space: nowrap; flex: 1; }
+  .arc-row a { color: #8b5cf6; text-decoration: none; white-space: nowrap; font-weight: 600; }
+  .arc-row a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -66,13 +104,42 @@
            font-size:12px;font-weight:600;background:#3b82f6;color:#fff;">
     🔄 Neu verbinden
   </button>
+  <button id="workshop-btn" onclick="toggleWorkshop()"
+    style="padding:5px 14px;border-radius:6px;border:none;cursor:pointer;
+           font-size:12px;font-weight:600;background:#0ea5e9;color:#fff;">
+    🧠 Workshop
+  </button>
+  <label id="screen-opt" title="Nimmt den GESAMTEN Bildschirm auf — auch alles, was neben der Besprechung offen ist.">
+    <input type="checkbox" id="watch-screen"> Bildschirm mitlesen
+  </label>
+  <button id="save-btn" onclick="saveProtocol()"
+    style="padding:5px 14px;border-radius:6px;border:none;cursor:pointer;
+           font-size:12px;font-weight:600;background:#8b5cf6;color:#fff;">
+    💾 Protokoll
+  </button>
+  <button id="archive-btn" onclick="toggleArchive()"
+    style="padding:5px 14px;border-radius:6px;border:none;cursor:pointer;
+           font-size:12px;font-weight:600;background:#374151;color:#fff;">
+    📂 Frühere
+  </button>
   <span id="clock"></span>
 </div>
+
+<div id="saveinfo">Mitschrift wird automatisch gespeichert.</div>
+<div id="archive"></div>
 
 <div id="columns">
   <div class="col">
     <div class="col-header">
       <span class="col-title">🎤 Mikrofon</span>
+      <span class="lang-label">gesprochen</span>
+      <select id="mic-src" onchange="setSourceLang('mic', this.value)">
+        <option value="de">Deutsch</option>
+        <option value="en">English</option>
+        <option value="ceb">Cebuano</option>
+        <option value="auto">Automatisch</option>
+      </select>
+      <span class="lang-label">→</span>
       <select id="mic-lang" onchange="setLang('mic', this.value)">
         <option value="">Keine Übersetzung</option>
         <option value="de">Deutsch</option>
@@ -88,6 +155,14 @@
   <div class="col">
     <div class="col-header">
       <span class="col-title">🔊 Unterhaltung</span>
+      <span class="lang-label">gesprochen</span>
+      <select id="desktop-src" onchange="setSourceLang('desktop', this.value)">
+        <option value="de">Deutsch</option>
+        <option value="en">English</option>
+        <option value="ceb">Cebuano</option>
+        <option value="auto">Automatisch</option>
+      </select>
+      <span class="lang-label">→</span>
       <select id="desktop-lang" onchange="setLang('desktop', this.value)">
         <option value="">Keine Übersetzung</option>
         <option value="de">Deutsch</option>
@@ -108,6 +183,7 @@ let micWs = null, desktopWs = null;
 let micMuted = false;
 let firstMicChunk = true, firstDesktopChunk = true;
 let pageClosing = false;
+let liveCount = 0;
 window.addEventListener('beforeunload', () => { pageClosing = true; });
 
 // Clock
@@ -119,7 +195,9 @@ setInterval(() => {
 // Lang from localStorage
 ['mic', 'desktop'].forEach(stream => {
   const saved = localStorage.getItem(`live_lang_${stream}`);
-  if (saved) document.getElementById(`${stream}-lang`).value = saved;
+  if (saved !== null) document.getElementById(`${stream}-lang`).value = saved;
+  const src = localStorage.getItem(`live_src_${stream}`);
+  if (src) document.getElementById(`${stream}-src`).value = src;
 });
 
 function setLang(stream, lang) {
@@ -129,12 +207,163 @@ function setLang(stream, lang) {
     ws.send(JSON.stringify({ set_target_lang: lang }));
 }
 
+// Gesprochene Sprache — greift ab dem nächsten Schnipsel, auch mitten im Transkript.
+function setSourceLang(stream, lang) {
+  localStorage.setItem(`live_src_${stream}`, lang);
+  const ws = stream === 'mic' ? micWs : desktopWs;
+  if (ws && ws.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify({ set_source_lang: lang }));
+  const label = lang === 'auto' ? 'automatisch erkannt' : lang.toUpperCase();
+  setSaveInfo(`Gesprochene Sprache (${stream === 'mic' ? 'Mikrofon' : 'Unterhaltung'}): ${label}`, true);
+}
+
 function stopLive() {
   // Stoppt nur die Backend-Session; die Seite bleibt offen und wartet
   // auf eine neue Session (Reconnect-Loop läuft weiter).
   fetch('/live/stop', { method: 'POST' }).catch(() => {});
   if (micWs) micWs.close();
   if (desktopWs) desktopWs.close();
+  setSaveInfo('Meeting beendet — Protokoll gespeichert.', true);
+}
+
+function setSaveInfo(msg, ok) {
+  const el = document.getElementById('saveinfo');
+  el.textContent = msg;
+  el.className = ok ? 'saved' : '';
+}
+
+function saveProtocol() {
+  // Server rendert das Markdown — enthaelt auch, was vor diesem Tab lief.
+  window.location.href = '/live/session/current/markdown';
+}
+
+async function toggleArchive() {
+  const box = document.getElementById('archive');
+  if (box.classList.contains('open')) { box.classList.remove('open'); return; }
+  box.classList.add('open');
+  box.innerHTML = '<h4>Frühere Meetings</h4><div class="path">lade…</div>';
+  try {
+    const r = await fetch('/live/sessions');
+    const d = await r.json();
+    let html = `<h4>Frühere Meetings</h4><div class="path">${escHtml(d.dir)}</div>`;
+    if (!d.sessions.length) {
+      html += '<div class="arc-prev">Noch keine gespeicherten Meetings.</div>';
+    } else {
+      for (const s of d.sessions) {
+        const when = s.session_id.replace(/_(\d{2})(\d{2})(\d{2})$/, ' $1:$2');
+        html += `<div class="arc-row">
+          <span class="arc-when">${escHtml(when)}</span>
+          <span class="arc-count">${s.entries} Beiträge</span>
+          <span class="arc-prev">${escHtml(s.preview)}</span>
+          <a href="/live/session/${encodeURIComponent(s.session_id)}/markdown">herunterladen</a>
+        </div>`;
+      }
+    }
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = '<h4>Frühere Meetings</h4><div class="arc-prev">Konnte nicht geladen werden.</div>';
+  }
+}
+
+// --- Workshop-Assistent -------------------------------------------------
+let workshopOn = false;
+let workshopTimer = null;
+
+async function toggleWorkshop() {
+  const btn = document.getElementById('workshop-btn');
+  try {
+    if (!workshopOn) {
+      const watch = document.getElementById('watch-screen').checked;
+      if (watch && !confirm(
+          'Der Assistent nimmt dann alle 60 Sekunden den GESAMTEN Bildschirm auf ' +
+          'und liest den Text daraus — auch aus Fenstern, die nichts mit der ' +
+          'Besprechung zu tun haben.\n\nWirklich einschalten?')) {
+        document.getElementById('watch-screen').checked = false;
+        return;
+      }
+      const r = await fetch('/live/workshop/start?watch_screen=' + watch, { method: 'POST' });
+      const d = await r.json();
+      if (!d.ok) { setSaveInfo(`Workshop: ${d.error}`, false); return; }
+      workshopOn = true;
+      btn.textContent = '🧠 Workshop läuft';
+      btn.style.background = '#059669';
+      showWorkshopPanel();
+      workshopTimer = setInterval(pollWorkshop, 15000);
+      pollWorkshop();
+    } else {
+      const r = await fetch('/live/workshop/stop', { method: 'POST' });
+      const d = await r.json();
+      workshopOn = false;
+      btn.textContent = '🧠 Workshop';
+      btn.style.background = '#0ea5e9';
+      clearInterval(workshopTimer);
+      setSaveInfo(`Workshop beendet — ${d.runs || 0} Durchgänge, Artefakte in ${d.dir || '?'}`, true);
+    }
+  } catch (e) {
+    setSaveInfo('Workshop-Assistent nicht erreichbar.', false);
+  }
+}
+
+function showWorkshopPanel() {
+  let p = document.getElementById('workshop-panel');
+  if (!p) {
+    p = document.createElement('div');
+    p.id = 'workshop-panel';
+    document.getElementById('saveinfo').after(p);
+  }
+  p.className = 'open';
+  p.innerHTML = '<div class="wp-status">Assistent gestartet — der erste Durchgang kommt nach ein paar Minuten Gespräch.</div>';
+}
+
+async function pollWorkshop() {
+  try {
+    const d = await (await fetch('/live/workshop/status')).json();
+    const p = document.getElementById('workshop-panel');
+    if (!p) return;
+    if (!d.running) {
+      p.innerHTML = '<div class="wp-status">Assistent läuft nicht.</div>';
+      return;
+    }
+    const parts = [];
+    parts.push(`<div class="wp-status">
+      ${d.runs} Durchgänge · ${d.entries_processed} Beiträge verarbeitet
+      ${d.last_run ? '· zuletzt ' + escHtml(d.last_run) : '· noch kein Durchgang'}
+      ${d.last_error ? '<span class="wp-err">· ' + escHtml(d.last_error) + '</span>' : ''}
+    </div>`);
+    if (d.screen) {
+      const s = d.screen;
+      const ocr = s.ocr ? `Texterkennung: ${escHtml(s.ocr)}` : 'ohne Texterkennung';
+      parts.push(`<div class="wp-status wp-warn">⦿ Bildschirm wird mitgelesen —
+        ${s.shots} Aufnahmen · ${s.skipped_unchanged} unverändert übersprungen · ${ocr}
+        ${s.hint ? '<span class="wp-err">· ' + escHtml(s.hint) + '</span>' : ''}</div>`);
+    }
+    if (d.sections && d.sections.length) {
+      parts.push('<div class="wp-tags">' + d.sections.map(s =>
+        `<span class="wp-tag">${escHtml(s)}</span>`).join('') +
+        (d.has_mockup ? '<span class="wp-tag" style="background:#3b2a4a;color:#c4b5fd">ENTWURF</span>' : '') +
+        ' <a href="/live/workshop/view" target="_blank">Ansicht öffnen ↗</a></div>');
+    }
+    p.innerHTML = parts.join('');
+  } catch (e) { /* Dienst kurz weg — nächster Durchlauf versucht es erneut */ }
+}
+
+async function restoreHistory() {
+  // Nach Reload/Reconnect: was der Server bereits mitgeschrieben hat, zurueckholen.
+  try {
+    const r = await fetch('/live/history');
+    const d = await r.json();
+    if (!d.entries || !d.entries.length) return;
+    for (const e of d.entries) {
+      appendChunk(`${e.channel}-transcript`, {
+        text: e.text,
+        translation: e.translation,
+        speaker: e.speaker,
+        lang_detected: e.lang,
+        timestamp: (e.t || '').slice(11, 19),
+      }, true);
+    }
+    setSaveInfo(`${d.entries.length} Beiträge aus laufender Mitschrift wiederhergestellt.`, true);
+  } catch (e) { /* Server nicht bereit — Reconnect-Loop versucht es erneut */ }
 }
 
 function reconnectNow() {
@@ -153,14 +382,15 @@ function toggleMic() {
     micWs.send(JSON.stringify({ mute: micMuted }));
 }
 
-function appendChunk(containerId, data) {
+function appendChunk(containerId, data, restored) {
   const container = document.getElementById(containerId);
+  if (!container) return;
   // Entferne "Warte…" Platzhalter
   const placeholder = container.querySelector('.no-signal');
   if (placeholder) placeholder.remove();
 
   const div = document.createElement('div');
-  div.className = 'chunk';
+  div.className = restored ? 'chunk restored' : 'chunk';
   let html = '';
   if (data.speaker)
     html += `<div class="chunk-speaker">${escHtml(data.speaker)}</div>`;
@@ -198,9 +428,11 @@ function connectWs(stream) {
   ws.onopen = () => {
     dot.className = 'ws-dot connected';
     updateStatus(true);
-    // Zielsprache + Mute-Zustand nach Reconnect synchronisieren
-    const lang = localStorage.getItem(`live_lang_${stream}`) || 'de';
-    ws.send(JSON.stringify({ set_target_lang: lang }));
+    // Sprachen + Mute-Zustand nach Reconnect synchronisieren
+    ws.send(JSON.stringify({
+      set_target_lang: document.getElementById(`${stream}-lang`).value,
+      set_source_lang: document.getElementById(`${stream}-src`).value,
+    }));
     if (stream === 'mic')
       ws.send(JSON.stringify({ mute: micMuted }));
   };
@@ -211,6 +443,8 @@ function connectWs(stream) {
     if (data.error) return;  // no session yet — onclose handles retry
     if (!data.text) return;
     appendChunk(`${stream}-transcript`, data);
+    liveCount++;
+    setSaveInfo(`${liveCount} Beiträge mitgeschrieben — automatisch gespeichert.`, true);
   };
 
   ws.onclose = () => {
@@ -225,6 +459,7 @@ function connectWs(stream) {
   else desktopWs = ws;
 }
 
+restoreHistory();
 connectWs('mic');
 connectWs('desktop');
 </script>
