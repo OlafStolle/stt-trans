@@ -175,21 +175,34 @@ def _to_wav_bytes(audio: np.ndarray, samplerate: int) -> bytes:
 
 
 class LiveRecordingSession:
-    """Streamt Audio kontinuierlich in 4s-WAV-Chunks via asyncio.Queue.
+    """Streamt Audio als WAV-Chunks via asyncio.Queue — geschnitten an Sprechpausen.
+
+    Ein starres Zeitraster (frueher: alle 4 Sekunden) trennt mitten im Wort.
+    Whisper bekommt dann Bruchstuecke und raet: aus "Kundenprojekt" wurde "Kuhn".
+    Deshalb wird hier an der naechsten Sprechpause geschnitten:
+
+      * kuerzer als MIN_SECONDS      -> weiterlaufen lassen (keine Schnipsel)
+      * Pause laenger als SILENCE_MS -> schneiden, das Wort ist zu Ende
+      * laenger als MAX_SECONDS      -> Notschnitt mit kleiner Ueberlappung,
+                                        damit auch bei Dauerreden nichts verloren geht
 
     Verwendung:
         session = LiveRecordingSession(device="default")
         session.start(asyncio.get_running_loop())
-        # WS-Handler liest:
         while True:
             chunk = await session.queue.get()
             if chunk is None:
                 break  # Session beendet
-            # chunk ist WAV-Bytes
         session.stop()
     """
 
-    CHUNK_SECONDS = 4
+    CHUNK_SECONDS = 4          # beibehalten: Bezugsgroesse fuer bestehende Aufrufer
+    MIN_SECONDS = 2.0          # darunter wird nicht geschnitten
+    MAX_SECONDS = 12.0         # Notbremse bei durchgehender Rede
+    SILENCE_MS = 400           # Pausenlaenge, die einen Schnitt ausloest
+    OVERLAP_SECONDS = 0.5      # nur beim Notschnitt: Sicherheitsueberlappung
+    #: Alles darunter gilt als Stille (int16-Skala, ~0.5 % Vollausschlag).
+    SILENCE_LEVEL = 180
 
     def __init__(
         self,
@@ -215,6 +228,12 @@ class LiveRecordingSession:
         self._buffer: list[np.ndarray] = []
         # Chunk length in native-rate frames.
         self._chunk_frames = self._native_sr * self.CHUNK_SECONDS
+        self._min_frames = int(self._native_sr * self.MIN_SECONDS)
+        self._max_frames = int(self._native_sr * self.MAX_SECONDS)
+        self._silence_frames = int(self._native_sr * self.SILENCE_MS / 1000)
+        self._overlap_frames = int(self._native_sr * self.OVERLAP_SECONDS)
+        self._quiet_run = 0        # zusammenhaengende stille Frames am Pufferende
+        self._buffered = 0         # Frames im Puffer (spart staendiges Summieren)
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Startet den sounddevice-InputStream. loop nötig für thread-sichere Queue."""
@@ -247,31 +266,68 @@ class LiveRecordingSession:
                     os.environ["PULSE_SOURCE"] = _restore_pulse
 
     def _callback(self, indata: np.ndarray, frames: int, time: object, status: object) -> None:
-        """PortAudio-Thread: Samples akkumulieren, bei vollem Chunk in Queue."""
-        if self._muted:
-            self._buffer.append(np.zeros_like(indata))
-        else:
-            self._buffer.append(indata.copy())
+        """PortAudio-Thread: Samples sammeln und an der naechsten Pause schneiden.
 
-        total = sum(a.shape[0] for a in self._buffer)
-        if total >= self._chunk_frames:
-            full = np.concatenate(self._buffer, axis=0)
-            audio = full[: self._chunk_frames]
-            tail = full[self._chunk_frames :]
-            self._buffer = [tail] if tail.shape[0] > 0 else []
-            # Resample to 16000 Hz before handing to Whisper.
-            if self._native_sr != SAMPLERATE:
-                audio = _resample(audio, self._native_sr, SAMPLERATE)
-            wav_bytes = _to_wav_bytes(audio, SAMPLERATE)
-            if self._loop:
-                self._loop.call_soon_threadsafe(self._queue.put_nowait, wav_bytes)
+        Muss schnell sein — laeuft im Audio-Thread. Deshalb nur ein Mittelwert
+        ueber den Block statt echter Signalanalyse.
+        """
+        block = np.zeros_like(indata) if self._muted else indata.copy()
+        self._buffer.append(block)
+        self._buffered += block.shape[0]
+
+        # Stille am Pufferende mitzaehlen; jeder laute Block setzt zurueck.
+        if self._muted or np.abs(block).mean() < self.SILENCE_LEVEL:
+            self._quiet_run += block.shape[0]
+        else:
+            self._quiet_run = 0
+
+        pause = (self._buffered >= self._min_frames
+                 and self._quiet_run >= self._silence_frames)
+        notschnitt = self._buffered >= self._max_frames
+        if not (pause or notschnitt):
+            return
+
+        full = np.concatenate(self._buffer, axis=0)
+        if notschnitt and not pause:
+            # Mitten im Wort: ein Stueck doppelt senden, damit das Wort in einem
+            # der beiden Chunks vollstaendig vorkommt.
+            cut = full.shape[0] - self._overlap_frames
+            audio, rest = full[:], full[max(0, cut):]
+        else:
+            audio, rest = full, np.empty((0, CHANNELS), dtype=full.dtype)
+
+        self._buffer = [rest] if rest.shape[0] else []
+        self._buffered = int(rest.shape[0])
+        self._quiet_run = 0
+
+        self._emit(audio)
+
+    def _emit(self, audio: np.ndarray) -> None:
+        """Legt einen fertigen Abschnitt als WAV in die Queue."""
+        if audio.shape[0] == 0:
+            return
+        if self._native_sr != SAMPLERATE:
+            audio = _resample(audio, self._native_sr, SAMPLERATE)
+        wav_bytes = _to_wav_bytes(audio, SAMPLERATE)
+        if self._loop:
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, wav_bytes)
 
     def stop(self) -> None:
-        """Stoppt den Stream und legt None-Sentinel in die Queue."""
+        """Stoppt den Stream und legt None-Sentinel in die Queue.
+
+        Der angefangene Abschnitt wird vorher noch abgeschickt — sonst fehlt der
+        letzte Satz, der beim Beenden noch im Puffer stand.
+        """
         if self._stream:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+        if self._buffer:
+            rest = np.concatenate(self._buffer, axis=0)
+            self._buffer, self._buffered = [], 0
+            # Zu kurze Reste sind reine Atemgeraeusche.
+            if rest.shape[0] >= int(self._native_sr * 0.4):
+                self._emit(rest)
         if self._loop:
             self._loop.call_soon_threadsafe(self._queue.put_nowait, None)
 

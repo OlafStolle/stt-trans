@@ -23,6 +23,21 @@ def test_broadcast_delivers_to_all_subscribers():
         loop.close()
 
 
+def test_start_live_route_calls_daemon():
+    """start_live_route() ruft daemon.start_live() auf und gibt das Ergebnis zurueck."""
+    from app.routes.live import start_live_route
+    loop = asyncio.new_event_loop()
+    try:
+        mock_daemon = MagicMock()
+        mock_daemon.start_live = AsyncMock(return_value=True)
+        with patch("app.main.get_daemon", return_value=mock_daemon):
+            result = loop.run_until_complete(start_live_route())
+        assert result == {"ok": True, "started": True}
+        mock_daemon.start_live.assert_awaited_once()
+    finally:
+        loop.close()
+
+
 def test_set_sessions_stores_sessions():
     """set_sessions() speichert Sessions im Modul-State."""
     mock_mic = MagicMock()

@@ -14,3 +14,4 @@ transcriptions/
 docs/chat-log.md
 docs/superpowers/
 *.service
+.gstack/
